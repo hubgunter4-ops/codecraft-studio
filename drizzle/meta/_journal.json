@@ -1,5 +1,13 @@
 {
   "version": "7",
   "dialect": "mysql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1788506984830,
+      "tag": "0000_handy_raza",
+      "breakpoints": true
+    }
+  ]
 }

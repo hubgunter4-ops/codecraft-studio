@@ -1,15 +1,26 @@
 # CodeCraft Studio
 
-Editor y revisor de código en español con OpenAI. La aplicación permite escribir o pegar un fragmento, elegir el lenguaje, pedir una revisión técnica o generar una versión corregida y copiar el resultado.
+Editor y revisor de código en español con OpenAI. Permite escribir o pegar código, elegir entre 16 lenguajes, pedir una revisión técnica, generar una versión corregida y crear código desde una instrucción en lenguaje natural. El editor usa Monaco Editor con resaltado de sintaxis, autocompletado y atajos familiares.
 
 ## Ejecutar en localhost
 
 ```bash
-pnpm install
-pnpm dev
+make install
+make dev
 ```
 
 Abre [http://localhost:3000](http://localhost:3000).
+
+## Comandos disponibles
+
+| Comando | Acción |
+| --- | --- |
+| `make install` | Instala las dependencias |
+| `make dev` | Inicia el servidor de desarrollo en localhost:3000 |
+| `make check` | Verifica TypeScript |
+| `make test` | Ejecuta las pruebas unitarias |
+| `make build` | Genera la compilación de producción |
+| `make format` | Formatea el código |
 
 ## Configuración de OpenAI
 
@@ -25,14 +36,6 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 ## Privacidad
 
 CodeCraft Studio no guarda el código, las solicitudes ni las respuestas en la base de datos. El fragmento se envía al proveedor configurado para producir la revisión y solo se mantiene en el estado de la sesión del navegador. La clave no se expone al frontend ni se incluye en GitHub.
-
-## Comandos útiles
-
-```bash
-pnpm check       # Verificación TypeScript
-pnpm test        # Pruebas unitarias
-pnpm build       # Compilación de producción
-```
 
 ## Repositorio
 

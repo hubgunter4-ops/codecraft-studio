@@ -1,6 +1,12 @@
 # CodeCraft Studio
 
-Editor y revisor de código en español con OpenAI. Permite escribir o pegar código, elegir entre 16 lenguajes, pedir una revisión técnica, generar una versión corregida y crear código desde una instrucción en lenguaje natural. El editor usa Monaco Editor con resaltado de sintaxis, autocompletado y atajos familiares.
+Editor estático para GitHub Pages con Monaco Editor. Permite escribir código con resaltado, elegir entre 16 lenguajes, generar código desde instrucciones en texto y solicitar revisión o corrección usando la API Key de OpenAI del propio usuario.
+
+## GitHub Pages
+
+El workflow `.github/workflows/deploy-pages.yml` construye y publica automáticamente la carpeta `dist/public` cada vez que se actualiza `main`. La ruta publicada es:
+
+`https://hubgunter4-ops.github.io/codecraft-studio/`
 
 ## Ejecutar en localhost
 
@@ -15,28 +21,20 @@ Abre [http://localhost:3000](http://localhost:3000).
 
 | Comando | Acción |
 | --- | --- |
-| `make install` | Instala las dependencias |
-| `make dev` | Inicia el servidor de desarrollo en localhost:3000 |
+| `make install` | Instala dependencias |
+| `make dev` | Inicia el servidor local |
 | `make check` | Verifica TypeScript |
-| `make test` | Ejecuta las pruebas unitarias |
-| `make build` | Genera la compilación de producción |
-| `make format` | Formatea el código |
+| `make test` | Ejecuta pruebas unitarias |
+| `make build` | Genera la compilación |
 
-## Configuración de OpenAI
+## API Key local
 
-La clave se usa exclusivamente en el backend. Define estas variables en el entorno local, en un archivo `.env` que no se versiona:
+Pulsa **Configurar API Key** dentro de la web e introduce tu clave. Se almacena solo en `localStorage` del navegador actual y se envía directamente a OpenAI desde el cliente. No se incorpora al bundle, no se sube a GitHub y no se guarda en la base de datos. Usa el botón **Eliminar** para borrarla.
 
-```bash
-OPENAI_API_KEY=tu_clave
-OPENAI_BASE_URL=https://api.openai.com/v1
-```
+La aplicación usa `https://api.openai.com/v1` y el modelo `gpt-4o-mini`. El campo de URL base permite apuntar a otro endpoint compatible con OpenAI.
 
-`OPENAI_BASE_URL` es opcional. El servidor usa `https://api.openai.com/v1` por defecto. La aplicación llama a `chat/completions` y utiliza `gpt-4o-mini` por defecto; puedes cambiarlo con `OPENAI_MODEL`.
+> La clave introducida en el navegador puede ser visible para ese navegador y sus extensiones. Usa una clave con límites de gasto y revócala cuando ya no la necesites.
 
 ## Privacidad
 
-CodeCraft Studio no guarda el código, las solicitudes ni las respuestas en la base de datos. El fragmento se envía al proveedor configurado para producir la revisión y solo se mantiene en el estado de la sesión del navegador. La clave no se expone al frontend ni se incluye en GitHub.
-
-## Repositorio
-
-El código fuente está en el repositorio privado de GitHub del proyecto.
+El código, las peticiones y las respuestas se mantienen en el estado de la sesión del navegador. GitHub Pages sirve archivos estáticos y no ejecuta el backend de CodeCraft.

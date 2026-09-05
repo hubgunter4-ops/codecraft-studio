@@ -145,7 +145,7 @@ function buildReadme({ name, slug, description, distro, packages, command, files
   const distroLabel = distros.find(item => item.value === distro)?.label ?? distro;
   const manager = distros.find(item => item.value === distro)?.manager ?? distro;
   const packageLine = packages.length ? packages.map(item => "`" + item + "`").join(", ") : "ninguna";
-  const fileLines = files.map(file => "- `" + file.path + "`").join("\\n");
+  const fileLines = files.map(file => "- `" + file.path + "`").join("\n");
   return [
     `# ${name}`,
     "",
@@ -181,7 +181,7 @@ function buildReadme({ name, slug, description, distro, packages, command, files
     "",
     "Este repositorio fue generado como plantilla. Audita los comandos y dependencias antes de usarlo en servidores, máquinas de producción o sistemas que contengan datos importantes.",
     "",
-  ].join("\\n");
+  ].join("\n");
 }
 
 function buildBundle({ name, description, distro, packagesValue, command, mode }: { name: string; description: string; distro: Distro; packagesValue: string; command: string; mode: OutputMode }): ToolBundle {

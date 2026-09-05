@@ -40,3 +40,12 @@ La aplicación usa `https://api.openai.com/v1` y el modelo `gpt-4o-mini`. El cam
 ## Privacidad
 
 El código, las peticiones y las respuestas se mantienen en el estado de la sesión del navegador. GitHub Pages sirve archivos estáticos y no ejecuta el backend de CodeCraft.
+
+
+## Constructor de herramientas Linux
+
+La ruta [`#/tools`](https://hubgunter4-ops.github.io/codecraft-studio/#/tools) permite generar herramientas para Ubuntu/Debian, Fedora/RHEL, Arch Linux, Alpine y openSUSE. El usuario puede elegir entre un script Bash completo o un repositorio portable con `README.md`, `Makefile`, smoke test, `.gitignore` y licencia.
+
+El generador adapta la instalación de paquetes al gestor de la distribución (`apt-get`, `dnf`, `pacman`, `apk` o `zypper`), incluye la opción `--dry-run`, muestra los archivos antes de descargar y no ejecuta comandos en el navegador. Los repositorios se descargan como archivos TAR y los scripts como `.sh` ejecutable.
+
+Antes de usar una salida generada con privilegios, revisa el contenido, las dependencias y las órdenes de instalación. La aplicación genera archivos localmente; no sube ni ejecuta el script.

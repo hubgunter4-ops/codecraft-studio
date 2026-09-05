@@ -6,6 +6,7 @@ import { useHashLocation } from "wouter/use-hash-location";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import ToolBuilder from "./pages/ToolBuilder";
 
 function Router() {
   const isGitHubPages = import.meta.env.BASE_URL !== "/";
@@ -17,6 +18,7 @@ function Router() {
         <Route path="/" component={Home} />
         <Route path="/review" component={Home} />
         <Route path="/generate" component={Home} />
+        <Route path="/tools" component={ToolBuilder} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

@@ -2,7 +2,7 @@
 
 Editor estático para GitHub Pages con Monaco Editor. Permite escribir código con resaltado, elegir entre 16 lenguajes, generar código desde instrucciones en texto y solicitar revisión o corrección usando la API Key de OpenAI del propio usuario.
 
-La interfaz se organiza en dos rutas: `/review` para revisar y corregir código, y `/generate` para crear código desde una descripción. Ambas funcionan bajo la base `/codecraft-studio/` de GitHub Pages.
+La interfaz se organiza en dos vistas: revisión y generación. En GitHub Pages usa hash routing para evitar 404 en rutas profundas: `/#/review` para revisar y corregir código, y `/#/generate` para crear código desde una descripción. En desarrollo local se mantienen las rutas de historial `/review` y `/generate`.
 
 ## GitHub Pages
 

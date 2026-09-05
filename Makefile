@@ -1,7 +1,7 @@
 .PHONY: install dev check test build format
 
 install:
-	pnpm install
+	pnpm install --frozen-lockfile
 
 dev:
 	pnpm dev

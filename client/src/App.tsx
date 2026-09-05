@@ -13,6 +13,8 @@ function Router() {
     <WouterRouter base={base}>
       <Switch>
         <Route path="/" component={Home} />
+        <Route path="/review" component={Home} />
+        <Route path="/generate" component={Home} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

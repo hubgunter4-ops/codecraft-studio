@@ -14,6 +14,7 @@
 - [Revisar y corregir código](#revisar-y-corregir-código)
 - [Generar código desde una descripción](#generar-código-desde-una-descripción)
 - [Crear herramientas Linux](#crear-herramientas-linux)
+- [Pestaña gpt-oss local](#pestaña-gpt-oss-local)
 - [Formatos de salida](#formatos-de-salida)
 - [Privacidad y API Key](#privacidad-y-api-key)
 - [Desarrollo local](#desarrollo-local)
@@ -376,7 +377,7 @@ make check
 make test
 ```
 
-## Licencia y referencias
+## Licencia
 
 Este repositorio contiene una aplicación de demostración y plantillas generadas. Revisa las licencias de las dependencias y de cualquier código generado antes de distribuirlo como producto.
 
@@ -387,3 +388,59 @@ La documentación de hash routing, almacenamiento de sesión, GitHub Pages y la 
 [3]: https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API "MDN — Web Storage API"
 [4]: https://platform.openai.com/docs/api-reference "OpenAI API Reference"
 [5]: https://pnpm.io/cli/install "pnpm CLI Documentation"
+[6]: https://github.com/openai/gpt-oss "Repositorio oficial de openai/gpt-oss"
+[7]: https://developers.openai.com/cookbook/articles/gpt-oss/run-vllm "Guía oficial para ejecutar gpt-oss con vLLM"
+[8]: https://developers.openai.com/api/docs/guides/reasoning "Guía de razonamiento de la API"
+## Pestaña gpt-oss local
+
+CodeCraft Studio incluye una pestaña **gpt-oss local** para conectar la interfaz a un servidor compatible con la API de OpenAI, sin enviar el código a OpenAI. La integración admite los dos contratos que expone vLLM para gpt-oss: **Responses API** (`/responses`) y **Chat Completions** (`/chat/completions`). El repositorio oficial de gpt-oss y la guía de vLLM describen estos modelos como modelos open-weight que pueden servirse mediante un endpoint compatible con OpenAI [6] [7].
+
+### Configuración en la aplicación
+
+1. Abre [CodeCraft Studio](https://hubgunter4-ops.github.io/codecraft-studio/) y selecciona la pestaña **gpt-oss local**.
+2. Mantén `http://localhost:8000/v1` como **Base URL** si el servidor corre en la misma máquina que el navegador.
+3. Introduce `openai/gpt-oss-120b` como modelo o el identificador que tu servidor exponga.
+4. Selecciona **Responses API** para `/responses` o **Chat Completions** para `/chat/completions`.
+5. Elige el nivel de razonamiento `low`, `medium` o `high`. Para la configuración solicitada, usa `high`.
+6. Guarda la configuración y después usa **Revisar código**, **Corregir con IA** o **Crear desde texto**.
+
+La configuración se guarda únicamente en `sessionStorage`. La API Key local es opcional y, si no se necesita, se envía como `EMPTY`. El navegador no ejecuta el modelo: solo realiza solicitudes HTTP al endpoint local. El servidor debe aceptar solicitudes CORS desde el origen de GitHub Pages.
+
+### Arrancar un servidor compatible
+
+Para vLLM, el servidor oficial puede iniciarse así:
+
+```bash
+vllm serve openai/gpt-oss-120b
+```
+
+La interfaz espera que el servidor atienda en `http://localhost:8000/v1`. Si utilizas otro puerto, host o proxy, cambia la **Base URL** en la pestaña. El modelo `gpt-oss-120b` requiere hardware considerable; para una instalación local más ligera, considera `openai/gpt-oss-20b` y cambia el identificador del modelo.
+
+### Equivalencia con los comandos de evaluación
+
+La pestaña usa los mismos conceptos de protocolo y razonamiento que los comandos proporcionados:
+
+```bash
+python -m gpt_oss.evals \
+  --base-url http://localhost:8000/v1 \
+  --eval aime25 \
+  --sampler responses \
+  --model openai/gpt-oss-120b \
+  --reasoning-effort high
+
+python -m gpt_oss.evals \
+  --base-url http://localhost:8000/v1 \
+  --eval aime25 \
+  --sampler chat_completions \
+  --model openai/gpt-oss-120b \
+  --reasoning-effort high
+```
+
+| Configuración de la pestaña | Solicitud HTTP |
+|---|---|
+| `responses` | `POST /v1/responses` con `reasoning: { effort: "high" }` |
+| `chat_completions` | `POST /v1/chat/completions` con `reasoning_effort: "high"` |
+| Modelo | `openai/gpt-oss-120b` |
+| Base URL | `http://localhost:8000/v1` |
+
+> La pestaña nunca ejecuta comandos de shell, instala paquetes ni inicia el servidor automáticamente. Revisa el comando y ejecútalo manualmente en un entorno que controles.

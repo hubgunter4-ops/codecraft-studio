@@ -6,7 +6,7 @@ La interfaz se organiza en dos vistas: revisión y generación. En GitHub Pages 
 
 ## GitHub Pages
 
-El workflow `.github/workflows/deploy-pages.yml` construye y publica automáticamente la carpeta `dist/public` cada vez que se actualiza `main`. La ruta publicada es:
+El workflow `.github/workflows/deploy-pages.yml` construye la carpeta `dist/public` y la publica automáticamente en la rama `gh-pages` cada vez que se actualiza `main`. En **Settings → Pages**, selecciona **Deploy from a branch**, rama `gh-pages` y carpeta `/ (root)`. La ruta publicada es:
 
 `https://hubgunter4-ops.github.io/codecraft-studio/`
 

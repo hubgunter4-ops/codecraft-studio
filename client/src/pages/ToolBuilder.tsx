@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,10 +12,15 @@ import {
   Download,
   FileCode2,
   FolderTree,
+  Github,
   Info,
+  Loader2,
   PackageCheck,
+  RefreshCw,
   ShieldCheck,
   Terminal,
+  UploadCloud,
+  Wrench,
   WandSparkles,
 } from "lucide-react";
 
@@ -32,6 +37,58 @@ type ToolBundle = {
   script: string;
   files: GeneratedFile[];
 };
+
+type GitFile = { path: string; content: string; sha?: string };
+type GitRepo = { owner: string; repo: string; branch: string; files: GitFile[] };
+const githubTokenStorage = "codecraft.github.token";
+const openaiKeyStorage = "codecraft.openai.apiKey";
+const openaiBaseStorage = "codecraft.openai.baseUrl";
+
+function parseGitHubRepo(value: string) {
+  const match = value.trim().replace(/\.git$/, "").match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\/|$)/i) ?? value.trim().match(/^([^/]+)\/([^/]+)$/);
+  if (!match) throw new Error("Usa una URL como https://github.com/usuario/repositorio");
+  return { owner: match[1], repo: match[2] };
+}
+
+async function githubRequest<T>(token: string, path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`https://api.github.com${path}`, { ...init, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", ...(init?.headers ?? {}) } });
+  if (!response.ok) throw new Error(`GitHub respondió ${response.status}: ${response.status === 401 ? "token inválido" : response.statusText}`);
+  return response.json() as Promise<T>;
+}
+
+async function loadGitHubRepo(token: string, source: string, branch: string): Promise<GitRepo> {
+  const { owner, repo } = parseGitHubRepo(source);
+  const tree = await githubRequest<{ tree?: Array<{ path: string; type: string; sha: string }> }>(token, `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+  const entries = (tree.tree ?? []).filter(item => item.type === "blob" && !item.path.startsWith(".git/") && !item.path.includes("node_modules/")).slice(0, 80);
+  if (entries.length === 0) throw new Error("No se encontraron archivos reparables en ese repositorio");
+  const files = await Promise.all(entries.map(async entry => {
+    const data = await githubRequest<{ content?: string; encoding?: string }>(token, `/repos/${owner}/${repo}/contents/${entry.path}?ref=${encodeURIComponent(branch)}`);
+    const content = data.encoding === "base64" ? atob((data.content ?? "").replace(/\n/g, "")) : data.content ?? "";
+    return { path: entry.path, content: content.slice(0, 40_000), sha: entry.sha };
+  }));
+  return { owner, repo, branch, files };
+}
+
+async function askRepair(key: string, baseUrl: string, repo: GitRepo, request: string) {
+  const snapshot = repo.files.map(file => `--- ${file.path} ---\n${file.content}`).join("\n").slice(0, 100_000);
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-4o-mini", temperature: 0.15, max_tokens: 2500, messages: [{ role: "system", content: "Eres un ingeniero Linux experto. Analiza un repositorio sin ejecutar sus archivos. Responde en español con ## Riesgos, ## Archivos afectados, ## Cambios propuestos y ## Validación segura. No inventes resultados de ejecución ni incluyas secretos." }, { role: "user", content: `Solicitud de reparación: ${request}\n\nRepositorio ${repo.owner}/${repo.repo}:\n${snapshot}` }] }) });
+  if (!response.ok) throw new Error(`OpenAI respondió ${response.status}`);
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  return payload.choices?.[0]?.message?.content?.trim() ?? "OpenAI devolvió una respuesta vacía";
+}
+
+async function publishGitHubRepo(token: string, repo: GitRepo, files: GeneratedFile[], message: string) {
+  const ref = await githubRequest<{ object: { sha: string } }>(token, `/repos/${repo.owner}/${repo.repo}/git/ref/heads/${encodeURIComponent(repo.branch)}`);
+  const parent = await githubRequest<{ tree: { sha: string } }>(token, `/repos/${repo.owner}/${repo.repo}/git/commits/${ref.object.sha}`);
+  const blobs = await Promise.all(files.map(async file => {
+    const blob = await githubRequest<{ sha: string }>(token, `/repos/${repo.owner}/${repo.repo}/git/blobs`, { method: "POST", body: JSON.stringify({ content: btoa(unescape(encodeURIComponent(file.content))), encoding: "base64" }) });
+    return { path: file.path, mode: file.executable ? "100755" : "100644", type: "blob", sha: blob.sha };
+  }));
+  const tree = await githubRequest<{ sha: string }>(token, `/repos/${repo.owner}/${repo.repo}/git/trees`, { method: "POST", body: JSON.stringify({ base_tree: parent.tree.sha, tree: blobs }) });
+  const commit = await githubRequest<{ sha: string }>(token, `/repos/${repo.owner}/${repo.repo}/git/commits`, { method: "POST", body: JSON.stringify({ message, tree: tree.sha, parents: [ref.object.sha] }) });
+  await githubRequest(token, `/repos/${repo.owner}/${repo.repo}/git/refs/heads/${encodeURIComponent(repo.branch)}`, { method: "PATCH", body: JSON.stringify({ sha: commit.sha, force: false }) });
+  return commit.sha;
+}
 
 const distros: Array<{ value: Distro; label: string; hint: string; manager: string }> = [
   { value: "debian", label: "Ubuntu / Debian", hint: "apt · Linux Mint · Pop!_OS", manager: "apt-get" },
@@ -269,6 +326,16 @@ export default function ToolBuilder() {
   const [acknowledged, setAcknowledged] = useState(false);
   const [bundle, setBundle] = useState<ToolBundle | null>(null);
   const [activeFile, setActiveFile] = useState(0);
+  const [githubToken, setGithubToken] = useState("");
+  const [githubSource, setGithubSource] = useState("");
+  const [githubBranch, setGithubBranch] = useState("main");
+  const [githubRepo, setGithubRepo] = useState<GitRepo | null>(null);
+  const [repairRequest, setRepairRequest] = useState("Revisa errores de seguridad, compatibilidad con la distribución elegida y comandos peligrosos. Propón cambios mínimos.");
+  const [repairReport, setRepairReport] = useState("");
+  const [githubBusy, setGithubBusy] = useState(false);
+  const [confirmPublish, setConfirmPublish] = useState(false);
+
+  useEffect(() => { setGithubToken(sessionStorage.getItem(githubTokenStorage) ?? ""); }, []);
 
   const selectedFile = bundle?.files[activeFile] ?? bundle?.files[0];
   const packageError = useMemo(() => {
@@ -303,6 +370,34 @@ export default function ToolBuilder() {
     if (!selectedFile) return;
     await navigator.clipboard.writeText(selectedFile.content);
     toast.success("Archivo copiado");
+  };
+
+  const connectGitHub = async () => {
+    if (!githubToken.trim()) return toast.error("Introduce un token de GitHub con permiso Contents: read/write");
+    if (!githubSource.trim()) return toast.error("Indica el repositorio de GitHub que quieres reparar");
+    setGithubBusy(true);
+    try {
+      const loaded = await loadGitHubRepo(githubToken.trim(), githubSource, githubBranch.trim() || "main");
+      sessionStorage.setItem(githubTokenStorage, githubToken.trim());
+      setGithubRepo(loaded);
+      toast.success(`Repositorio cargado: ${loaded.files.length} archivos`);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo cargar el repositorio"); } finally { setGithubBusy(false); }
+  };
+
+  const repairRepo = async () => {
+    if (!githubRepo) return toast.error("Carga primero un repositorio de GitHub");
+    const key = sessionStorage.getItem(openaiKeyStorage) ?? "";
+    if (!key) return toast.error("Configura tu API Key de OpenAI en la pantalla principal");
+    setGithubBusy(true);
+    try { setRepairReport(await askRepair(key, sessionStorage.getItem(openaiBaseStorage) ?? "https://api.openai.com/v1", githubRepo, repairRequest)); toast.success("Diagnóstico de reparación listo"); } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo analizar el repositorio"); } finally { setGithubBusy(false); }
+  };
+
+  const publishBundle = async () => {
+    if (!githubRepo) return toast.error("Carga primero un repositorio destino");
+    if (!bundle) return toast.error("Genera un repositorio antes de publicarlo");
+    if (!confirmPublish) return toast.error("Confirma que quieres crear un commit en GitHub");
+    setGithubBusy(true);
+    try { const sha = await publishGitHubRepo(githubToken.trim(), githubRepo, bundle.files, `feat: add ${bundle.name} Linux tool`); toast.success(`Repositorio publicado · commit ${sha.slice(0, 7)}`); } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo publicar en GitHub"); } finally { setGithubBusy(false); }
   };
 
   return (
@@ -349,6 +444,7 @@ export default function ToolBuilder() {
           </section>
         </div>
 
+        <section className="mt-6 rounded-2xl border border-[#dfe5ea] bg-white p-5 shadow-[0_14px_40px_rgba(31,55,78,.06)]"><div className="mb-5 flex items-center justify-between gap-3"><div><div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-[.14em] text-[#1e3a5f]"><Github size={15} /> Conector GitHub</div><h2 className="text-lg font-extrabold text-[#14283d]">Repara o publica el repositorio completo</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-[#718096]">Carga un repositorio desde GitHub para diagnosticarlo con IA o publica la herramienta generada como un commit completo.</p></div><Badge className="border-0 bg-[#eef3f7] text-[10px] text-[#34516b]"><ShieldCheck className="mr-1 size-3" /> Token solo en sesión</Badge></div><div className="grid gap-3 lg:grid-cols-[1.1fr_1fr_130px_auto]"><input type="password" value={githubToken} onChange={event => setGithubToken(event.target.value)} placeholder="ghp_... / fine-grained token" autoComplete="off" className="h-10 rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-xs outline-none focus:border-[#1e3a5f]"/><input value={githubSource} onChange={event => setGithubSource(event.target.value)} placeholder="https://github.com/usuario/repo" className="h-10 rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-xs outline-none focus:border-[#1e3a5f]"/><input value={githubBranch} onChange={event => setGithubBranch(event.target.value)} placeholder="main" className="h-10 rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 font-mono text-xs outline-none focus:border-[#1e3a5f]"/><Button onClick={connectGitHub} disabled={githubBusy} className="h-10 bg-[#1e3a5f] text-xs font-bold text-white hover:bg-[#16304f]">{githubBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : <RefreshCw className="mr-2 size-4" />} Cargar repo</Button></div><p className="mt-2 text-[11px] text-[#91a0ad]">Crea un token fine-grained con acceso únicamente al repositorio objetivo y permisos <code>Contents: Read and write</code>. No se guarda en GitHub ni en CodeCraft.</p>{githubRepo && <div className="mt-5 grid gap-4 lg:grid-cols-[.8fr_1.2fr]"><div className="rounded-xl border border-[#e3e8ed] bg-[#fbfcfd] p-4"><div className="flex items-center gap-2 text-xs font-bold text-[#324b61]"><CheckCircle2 className="size-4 text-[#4c9f70]" /> {githubRepo.owner}/{githubRepo.repo}</div><p className="mt-1 text-[11px] text-[#91a0ad]">Rama {githubRepo.branch} · {githubRepo.files.length} archivos cargados</p><label className="mt-4 block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Qué quieres reparar</span><Textarea value={repairRequest} onChange={event => setRepairRequest(event.target.value)} className="min-h-[92px] resize-none border-[#dfe5ea] bg-white text-xs" /></label><Button onClick={repairRepo} disabled={githubBusy} variant="outline" className="mt-3 h-10 w-full border-[#1e3a5f] text-xs font-bold text-[#1e3a5f]">{githubBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Wrench className="mr-2 size-4" />} Analizar para reparar</Button>{bundle && <><label className="mt-4 flex items-start gap-2 rounded-lg border border-[#f0dfb4] bg-[#fffaf0] p-3"><input type="checkbox" checked={confirmPublish} onChange={event => setConfirmPublish(event.target.checked)} className="mt-0.5 accent-[#e56b42]" /><span className="text-[11px] leading-5 text-[#6f6248]">Confirmo crear un commit y subir los archivos generados a este repositorio.</span></label><Button onClick={publishBundle} disabled={githubBusy} className="mt-3 h-10 w-full bg-[#e56b42] text-xs font-bold text-white hover:bg-[#d95d35]"><UploadCloud className="mr-2 size-4" /> Subir herramienta generada</Button></>}</div><div className="min-h-[230px] overflow-auto rounded-xl bg-[#172635] p-4">{repairReport ? <pre className="whitespace-pre-wrap font-mono text-[11px] leading-5 text-[#dbe7ef]">{repairReport}</pre> : <div className="flex h-full min-h-[190px] flex-col items-center justify-center text-center text-[#91a0ad]"><Wrench size={22} className="mb-3 text-[#e56b42]" /><p className="text-xs font-bold text-[#dbe7ef]">Diagnóstico de reparación</p><p className="mt-1 max-w-sm text-[11px] leading-5">La IA revisará los archivos cargados sin ejecutar comandos. Después podrás aplicar cambios manualmente o subir una herramienta nueva.</p></div>}</div></div>}</section>
         <div className="mt-5 grid gap-3 md:grid-cols-3"><div className="rounded-xl border border-[#e5e9ed] bg-white p-4"><PackageCheck className="mb-2 size-4 text-[#e56b42]" /><p className="text-xs font-bold">Gestor de paquetes</p><p className="mt-1 text-[11px] leading-5 text-[#91a0ad]">La plantilla adapta la instalación a apt, dnf, pacman, apk o zypper.</p></div><div className="rounded-xl border border-[#e5e9ed] bg-white p-4"><ShieldCheck className="mb-2 size-4 text-[#4c9f70]" /><p className="text-xs font-bold">Modo dry-run</p><p className="mt-1 text-[11px] leading-5 text-[#91a0ad]">Prueba la secuencia y revisa comandos antes de tocar el sistema.</p></div><div className="rounded-xl border border-[#e5e9ed] bg-white p-4"><Archive className="mb-2 size-4 text-[#1e3a5f]" /><p className="text-xs font-bold">Repo portable</p><p className="mt-1 text-[11px] leading-5 text-[#91a0ad]">Descarga un TAR con documentación, smoke test y Makefile.</p></div></div>
         <p className="mt-5 flex items-center gap-2 text-[11px] text-[#91a0ad]"><Info size={13} /> La herramienta solo genera archivos en tu navegador. Audita siempre scripts y dependencias antes de ejecutarlos con privilegios.</p>
       </main>

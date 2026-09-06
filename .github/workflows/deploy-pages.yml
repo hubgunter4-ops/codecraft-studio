@@ -6,10 +6,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 concurrency:
-  group: gh-pages
+  group: pages
   cancel-in-progress: true
 
 jobs:
@@ -38,11 +40,11 @@ jobs:
         env:
           GITHUB_ACTIONS: true
 
-      - name: Publish gh-pages branch
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: ./dist/public
-          force_orphan: true
-          enable_jekyll: false
+          path: ./dist/public
+
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4

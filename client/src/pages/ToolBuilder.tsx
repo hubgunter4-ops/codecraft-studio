@@ -110,6 +110,15 @@ const commandPresets = [
   { value: "logs", label: "Últimos logs", command: "journalctl -p warning..alert -n 50 --no-pager" },
 ] as const;
 
+function detectCommandPreset(description: string) {
+  const text = description.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (/(disco|espacio|almacenamiento|directorio|carpeta)/.test(text)) return "disk";
+  if (/(red|redes|internet|conexion|dns|puerto|conectividad)/.test(text)) return "network";
+  if (/(proceso|procesos|cpu|consumo|carga)/.test(text)) return "processes";
+  if (/(log|logs|registro|registros|journal|error)/.test(text)) return "logs";
+  return "system";
+}
+
 function slugify(value: string) {
   return value
     .normalize("NFKD")
@@ -377,6 +386,15 @@ export default function ToolBuilder() {
     toast.success(`Comando rellenado: ${preset.label}`);
   };
 
+  const detectCommandFromDescription = () => {
+    if (!description.trim()) return toast.error("Describe primero qué hará la herramienta");
+    const detected = detectCommandPreset(description);
+    setCommandPreset(detected);
+    const preset = commandPresets.find(item => item.value === detected) ?? commandPresets[0];
+    setCommand(preset.command);
+    toast.success(`Petición identificada: ${preset.label}`);
+  };
+
   const download = () => {
     if (!bundle) return;
     if (bundle.mode === "script") {
@@ -467,7 +485,7 @@ export default function ToolBuilder() {
             <div className="mb-5 flex items-center justify-between"><div><h2 className="text-sm font-bold">Especificación</h2><p className="mt-1 text-xs text-[#91a0ad]">Define qué debe hacer tu herramienta.</p></div><Badge className="border-0 bg-[#eef3f7] text-[10px] text-[#34516b]"><PackageCheck className="mr-1 size-3" /> Plantillas Linux</Badge></div>
             <div className="space-y-4">
               <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Nombre de la herramienta</span><input value={name} onChange={event => setName(event.target.value)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-sm outline-none focus:border-[#e56b42]" placeholder="backup-helper" /></label>
-              <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Qué hará</span><Textarea value={description} onChange={event => setDescription(event.target.value)} className="min-h-[76px] resize-none border-[#dfe5ea] bg-[#fbfcfd] text-sm" placeholder="Describe la finalidad de la herramienta..." /></label>
+              <label className="block"><div className="mb-1.5 flex items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Qué hará</span><button type="button" onClick={detectCommandFromDescription} className="inline-flex h-8 items-center rounded-lg border border-[#dfe5ea] bg-[#f2f6f9] px-2.5 text-[11px] font-bold text-[#34516b] transition hover:border-[#c4d0d9] hover:bg-white"><WandSparkles className="mr-1.5 size-3" /> Identificar petición</button></div><Textarea value={description} onChange={event => setDescription(event.target.value)} className="min-h-[76px] resize-none border-[#dfe5ea] bg-[#fbfcfd] text-sm" placeholder="Describe la finalidad de la herramienta..." /><span className="mt-1 block text-[11px] text-[#91a0ad]">Detecta palabras clave y propone un comando base que puedes ajustar.</span></label>
               <div className="grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Distribución objetivo</span><select value={distro} onChange={event => setDistro(event.target.value as Distro)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-sm outline-none focus:border-[#e56b42]">{distros.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><span className="mt-1 block text-[11px] text-[#91a0ad]">{distros.find(item => item.value === distro)?.hint}</span></label><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Paquetes opcionales</span><input value={packages} onChange={event => setPackages(event.target.value)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 font-mono text-xs outline-none focus:border-[#e56b42]" placeholder="curl jq ripgrep" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Separados por espacios; sin comandos.</span></label></div>
               <label className="block"><div className="mb-1.5 flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Comando principal</span><div className="flex items-center gap-2"><select value={commandPreset} onChange={event => setCommandPreset(event.target.value)} aria-label="Preset de comando" className="h-8 rounded-lg border border-[#dfe5ea] bg-white px-2 text-[11px] text-[#536b7d] outline-none focus:border-[#e56b42]"><option value="">Selecciona un preset</option>{commandPresets.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><button type="button" onClick={fillCommand} disabled={!commandPreset} className="inline-flex h-8 items-center rounded-lg border border-[#ead9d1] bg-[#fff8f5] px-2.5 text-[11px] font-bold text-[#c8522e] transition hover:bg-[#fff0e9] disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="mr-1.5 size-3" /> Rellenar</button></div></div><Textarea value={command} onChange={event => setCommand(event.target.value)} className="min-h-[105px] resize-y border-[#dfe5ea] bg-[#172635] font-mono text-xs leading-5 text-[#dbe7ef]" placeholder="echo 'Hello Linux'" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Selecciona un preset para rellenar automáticamente o edita el comando Bash manualmente. Puedes usar varias órdenes con &&.</span></label>
               <div><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Formato de salida</span><div className="grid grid-cols-2 gap-2"><button onClick={() => setMode("script")} className={`rounded-xl border p-3 text-left transition ${mode === "script" ? "border-[#e56b42] bg-[#fff5f0]" : "border-[#dfe5ea] bg-[#fbfcfd] hover:border-[#c4d0d9]"}`}><Terminal className={`mb-2 size-4 ${mode === "script" ? "text-[#e56b42]" : "text-[#718096]"}`} /><span className="block text-xs font-bold">Script completo</span><span className="mt-1 block text-[11px] text-[#91a0ad]">Un .sh ejecutable.</span></button><button onClick={() => setMode("repo")} className={`rounded-xl border p-3 text-left transition ${mode === "repo" ? "border-[#1e3a5f] bg-[#f2f6f9]" : "border-[#dfe5ea] bg-[#fbfcfd] hover:border-[#c4d0d9]"}`}><FolderTree className={`mb-2 size-4 ${mode === "repo" ? "text-[#1e3a5f]" : "text-[#718096]"}`} /><span className="block text-xs font-bold">Repositorio</span><span className="mt-1 block text-[11px] text-[#91a0ad]">README, tests y Makefile.</span></button></div></div>

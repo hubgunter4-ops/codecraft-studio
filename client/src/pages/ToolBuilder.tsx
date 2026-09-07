@@ -120,6 +120,11 @@ function detectCommandPreset(description: string) {
   return "system";
 }
 
+function improveRequest(description: string, distro: Distro, presetLabel: string) {
+  const clean = description.trim().replace(/\s+/g, " ");
+  return `Construye una herramienta Linux para ${distro} que cumpla exactamente este objetivo: ${clean}. Conserva la intención y el resultado funcional solicitado. Usa como referencia la categoría ${presetLabel}, genera archivos autocontenidos y documenta los requisitos. Incluye validación de entradas, permisos mínimos, modo dry-run y mensajes claros. No ejecutes comandos durante la generación, no incluyas secretos y solicita revisión humana antes de cualquier acción destructiva o publicación.`;
+}
+
 function slugify(value: string) {
   return value
     .normalize("NFKD")
@@ -402,11 +407,15 @@ export default function ToolBuilder() {
     if (!request) return toast.error("Describe primero qué hará la herramienta");
     const risky = /\b(rm\s+-rf|mkfs|dd\s+if=|shutdown|reboot|chmod\s+777|curl.+\|\s*(ba)?sh|wget.+\|\s*(ba)?sh)\b/i.test(request);
     const preset = commandPresets.find(item => item.value === detectCommandPreset(request)) ?? commandPresets[0];
+    const improved = improveRequest(request, distro, preset.label);
     const context = [
       "# Contexto ejecutable para CodeCraft Studio",
       "",
       "## Petición original (inmutable)",
       request,
+      "",
+      "## Petición reestructurada (preserva intención y función)",
+      improved,
       "",
       "## Objetivo",
       `Crear una herramienta Linux para: ${request}`,
@@ -424,8 +433,8 @@ export default function ToolBuilder() {
       "- Pedir confirmación humana antes de publicar cambios o ejecutar acciones destructivas.",
     ].join("\n");
     setGeneratedContext(context);
-    if (risky) toast.warning("Alerta: la petición contiene patrones potencialmente peligrosos. El contexto queda en modo revisión y no ejecuta nada.");
-    else toast.success("Contexto generado sin modificar la petición original");
+    if (risky) toast.warning("Alerta: la petición contiene patrones potencialmente peligrosos. Se añadió un marco seguro; el contexto requiere revisión y no ejecuta nada.");
+    else toast.success("Petición reestructurada y contexto generado sin modificar el original");
   };
 
   const copyGeneratedContext = async () => {

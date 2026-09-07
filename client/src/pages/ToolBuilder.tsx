@@ -339,7 +339,7 @@ export default function ToolBuilder() {
   const [repairData, setRepairData] = useState<{ summary: string; patches: RepairPatch[] } | null>(null);
   const [selectedPatches, setSelectedPatches] = useState<string[]>([]);
   const [appliedPatchIds, setAppliedPatchIds] = useState<string[]>([]);
-  const [toolTab, setToolTab] = useState<"create" | "repair">("create");
+  const [toolTab, setToolTab] = useState<"create" | "repair">(() => (window.location.hash.includes("tab=repair") || window.location.search.includes("tab=repair") ? "repair" : "create"));
   const [githubBusy, setGithubBusy] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
 

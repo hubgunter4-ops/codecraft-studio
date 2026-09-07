@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import {
   Archive,
+  AlertTriangle,
   CheckCircle2,
   Clipboard,
   Code2,
@@ -344,6 +345,7 @@ export default function ToolBuilder() {
   const [packages, setPackages] = useState("curl jq");
   const [command, setCommand] = useState("uname -a && printf '\\nDisk:\\n' && df -h /");
   const [commandPreset, setCommandPreset] = useState("system");
+  const [generatedContext, setGeneratedContext] = useState("");
   const [mode, setMode] = useState<OutputMode>("repo");
   const [acknowledged, setAcknowledged] = useState(false);
   const [bundle, setBundle] = useState<ToolBundle | null>(null);
@@ -393,6 +395,43 @@ export default function ToolBuilder() {
     const preset = commandPresets.find(item => item.value === detected) ?? commandPresets[0];
     setCommand(preset.command);
     toast.success(`Petición identificada: ${preset.label}`);
+  };
+
+  const generatePromptContext = async () => {
+    const request = description.trim();
+    if (!request) return toast.error("Describe primero qué hará la herramienta");
+    const risky = /\b(rm\s+-rf|mkfs|dd\s+if=|shutdown|reboot|chmod\s+777|curl.+\|\s*(ba)?sh|wget.+\|\s*(ba)?sh)\b/i.test(request);
+    const preset = commandPresets.find(item => item.value === detectCommandPreset(request)) ?? commandPresets[0];
+    const context = [
+      "# Contexto ejecutable para CodeCraft Studio",
+      "",
+      "## Petición original (inmutable)",
+      request,
+      "",
+      "## Objetivo",
+      `Crear una herramienta Linux para: ${request}`,
+      "",
+      "## Comportamiento esperado",
+      `- Generar un script Bash o repositorio completo para ${distro}.`,
+      `- Usar como punto de partida el comando de ${preset.label}:`,
+      `  ${preset.command}`,
+      "- Mantener el comando editable y mostrar un modo dry-run antes de ejecutar.",
+      "- No ejecutar comandos durante la generación ni modificar la petición original.",
+      "",
+      "## Restricciones de seguridad",
+      "- Auditar dependencias, permisos y rutas antes de ejecutar.",
+      "- No incluir secretos ni credenciales.",
+      "- Pedir confirmación humana antes de publicar cambios o ejecutar acciones destructivas.",
+    ].join("\n");
+    setGeneratedContext(context);
+    if (risky) toast.warning("Alerta: la petición contiene patrones potencialmente peligrosos. El contexto queda en modo revisión y no ejecuta nada.");
+    else toast.success("Contexto generado sin modificar la petición original");
+  };
+
+  const copyGeneratedContext = async () => {
+    if (!generatedContext) return;
+    await navigator.clipboard.writeText(generatedContext);
+    toast.success("Contexto copiado");
   };
 
   const download = () => {
@@ -485,7 +524,7 @@ export default function ToolBuilder() {
             <div className="mb-5 flex items-center justify-between"><div><h2 className="text-sm font-bold">Especificación</h2><p className="mt-1 text-xs text-[#91a0ad]">Define qué debe hacer tu herramienta.</p></div><Badge className="border-0 bg-[#eef3f7] text-[10px] text-[#34516b]"><PackageCheck className="mr-1 size-3" /> Plantillas Linux</Badge></div>
             <div className="space-y-4">
               <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Nombre de la herramienta</span><input value={name} onChange={event => setName(event.target.value)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-sm outline-none focus:border-[#e56b42]" placeholder="backup-helper" /></label>
-              <label className="block"><div className="mb-1.5 flex items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Qué hará</span><button type="button" onClick={detectCommandFromDescription} className="inline-flex h-8 items-center rounded-lg border border-[#dfe5ea] bg-[#f2f6f9] px-2.5 text-[11px] font-bold text-[#34516b] transition hover:border-[#c4d0d9] hover:bg-white"><WandSparkles className="mr-1.5 size-3" /> Identificar petición</button></div><Textarea value={description} onChange={event => setDescription(event.target.value)} className="min-h-[76px] resize-none border-[#dfe5ea] bg-[#fbfcfd] text-sm" placeholder="Describe la finalidad de la herramienta..." /><span className="mt-1 block text-[11px] text-[#91a0ad]">Detecta palabras clave y propone un comando base que puedes ajustar.</span></label>
+              <label className="block"><div className="mb-1.5 flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Qué hará</span><div className="flex items-center gap-2"><button type="button" onClick={detectCommandFromDescription} className="inline-flex h-8 items-center rounded-lg border border-[#dfe5ea] bg-[#f2f6f9] px-2.5 text-[11px] font-bold text-[#34516b] transition hover:border-[#c4d0d9] hover:bg-white"><WandSparkles className="mr-1.5 size-3" /> Identificar petición</button><button type="button" onClick={generatePromptContext} className="inline-flex h-8 items-center rounded-lg border border-[#ead9d1] bg-[#fff8f5] px-2.5 text-[11px] font-bold text-[#c8522e] transition hover:bg-[#fff0e9]"><WandSparkles className="mr-1.5 size-3" /> GenPrompt</button></div></div><Textarea value={description} onChange={event => setDescription(event.target.value)} className="min-h-[76px] resize-none border-[#dfe5ea] bg-[#fbfcfd] text-sm" placeholder="Describe la finalidad de la herramienta..." /><span className="mt-1 block text-[11px] text-[#91a0ad]">Identifica palabras clave o convierte la petición en un contexto ejecutable sin modificar este texto.</span>{generatedContext && <div className="mt-3 rounded-xl border border-[#f0dfb4] bg-[#fffaf0] p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="flex items-center gap-1.5 text-[11px] font-bold text-[#6f6248]"><AlertTriangle className="size-3.5" /> Contexto generado · revisión humana requerida</span><button type="button" onClick={copyGeneratedContext} className="flex items-center gap-1 text-[11px] font-bold text-[#8a6a32] hover:text-[#c8522e]"><Clipboard className="size-3.5" /> Copiar</button></div><textarea readOnly value={generatedContext} aria-label="Contexto ejecutable generado" className="min-h-[190px] w-full resize-y rounded-lg border border-[#ecdcae] bg-white p-3 font-mono text-[11px] leading-5 text-[#6f6248] outline-none" /></div>}</label>
               <div className="grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Distribución objetivo</span><select value={distro} onChange={event => setDistro(event.target.value as Distro)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-sm outline-none focus:border-[#e56b42]">{distros.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><span className="mt-1 block text-[11px] text-[#91a0ad]">{distros.find(item => item.value === distro)?.hint}</span></label><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Paquetes opcionales</span><input value={packages} onChange={event => setPackages(event.target.value)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 font-mono text-xs outline-none focus:border-[#e56b42]" placeholder="curl jq ripgrep" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Separados por espacios; sin comandos.</span></label></div>
               <label className="block"><div className="mb-1.5 flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Comando principal</span><div className="flex items-center gap-2"><select value={commandPreset} onChange={event => setCommandPreset(event.target.value)} aria-label="Preset de comando" className="h-8 rounded-lg border border-[#dfe5ea] bg-white px-2 text-[11px] text-[#536b7d] outline-none focus:border-[#e56b42]"><option value="">Selecciona un preset</option>{commandPresets.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><button type="button" onClick={fillCommand} disabled={!commandPreset} className="inline-flex h-8 items-center rounded-lg border border-[#ead9d1] bg-[#fff8f5] px-2.5 text-[11px] font-bold text-[#c8522e] transition hover:bg-[#fff0e9] disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="mr-1.5 size-3" /> Rellenar</button></div></div><Textarea value={command} onChange={event => setCommand(event.target.value)} className="min-h-[105px] resize-y border-[#dfe5ea] bg-[#172635] font-mono text-xs leading-5 text-[#dbe7ef]" placeholder="echo 'Hello Linux'" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Selecciona un preset para rellenar automáticamente o edita el comando Bash manualmente. Puedes usar varias órdenes con &&.</span></label>
               <div><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Formato de salida</span><div className="grid grid-cols-2 gap-2"><button onClick={() => setMode("script")} className={`rounded-xl border p-3 text-left transition ${mode === "script" ? "border-[#e56b42] bg-[#fff5f0]" : "border-[#dfe5ea] bg-[#fbfcfd] hover:border-[#c4d0d9]"}`}><Terminal className={`mb-2 size-4 ${mode === "script" ? "text-[#e56b42]" : "text-[#718096]"}`} /><span className="block text-xs font-bold">Script completo</span><span className="mt-1 block text-[11px] text-[#91a0ad]">Un .sh ejecutable.</span></button><button onClick={() => setMode("repo")} className={`rounded-xl border p-3 text-left transition ${mode === "repo" ? "border-[#1e3a5f] bg-[#f2f6f9]" : "border-[#dfe5ea] bg-[#fbfcfd] hover:border-[#c4d0d9]"}`}><FolderTree className={`mb-2 size-4 ${mode === "repo" ? "text-[#1e3a5f]" : "text-[#718096]"}`} /><span className="block text-xs font-bold">Repositorio</span><span className="mt-1 block text-[11px] text-[#91a0ad]">README, tests y Makefile.</span></button></div></div>

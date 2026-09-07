@@ -111,6 +111,22 @@ const commandPresets = [
   { value: "logs", label: "Últimos logs", command: "journalctl -p warning..alert -n 50 --no-pager" },
 ] as const;
 
+function deriveCommandFromRequest(description: string, currentCommand: string) {
+  const text = description.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const injectionRequest = /(inject|inyecc|modify context|modificar contexto|payload|obfuscat|bypass|evasion|exploit)/.test(text);
+  if (injectionRequest) {
+    return {
+      command: "printf '%s\\n' '[safe-audit] Revisando archivos y patrones de inyección sin modificar el sistema' && grep -RInE 'eval\\(|source[[:space:]]|curl[^|]*\\|[[:space:]]*(ba)?sh|wget[^|]*\\|[[:space:]]*(ba)?sh' . --exclude-dir=.git --exclude='*.log' 2>/dev/null || true",
+      warning: "La petición contiene una instrucción de inyección o modificación de contexto; se convirtió en una auditoría segura de solo lectura.",
+    };
+  }
+  const detected = commandPresets.find(item => item.value === detectCommandPreset(description));
+  const isPresetCommand = commandPresets.some(item => item.command === currentCommand.trim());
+  return detected && isPresetCommand
+    ? { command: detected.command, warning: "" }
+    : { command: currentCommand.trim(), warning: "" };
+}
+
 function detectCommandPreset(description: string) {
   const text = description.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   if (/(disco|espacio|almacenamiento|directorio|carpeta)/.test(text)) return "disk";
@@ -381,7 +397,10 @@ export default function ToolBuilder() {
     if (!command.trim()) return toast.error("Indica el comando principal");
     if (packageError) return toast.error(packageError);
     if (!acknowledged) return toast.error("Confirma que revisarás el script antes de ejecutarlo");
-    const next = buildBundle({ name: name.trim(), description: description.trim(), distro, packagesValue: packages.trim(), command: command.trim(), mode });
+    const resolved = deriveCommandFromRequest(description, command);
+    if (resolved.warning) toast.warning(resolved.warning);
+    setCommand(resolved.command);
+    const next = buildBundle({ name: name.trim(), description: description.trim(), distro, packagesValue: packages.trim(), command: resolved.command, mode });
     setBundle(next);
     setActiveFile(0);
     toast.success(mode === "repo" ? "Repositorio generado" : "Script generado");

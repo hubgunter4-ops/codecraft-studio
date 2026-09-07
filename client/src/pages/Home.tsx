@@ -60,12 +60,12 @@ function normalizeBaseUrl(value: string) {
   return trimmed;
 }
 
-const cyberRiskPattern = /\b(ddos?|dos|denegaci[oó]n de servicio|ataque de red|flood|botnet|ransomware|keylogger|credential stuffing|robar contrase[nñ]as?)\b/i;
+const cyberRiskPattern = /\b(ddos?|denegaci[oó]n de servicio|flood|botnet|ransomware|keylogger|credential stuffing|robar contrase[nñ]as?)\b/i;
 function normalizeGenerationRequest(request: string, language: string) {
   if (!cyberRiskPattern.test(request)) return { prompt: request, flagged: false };
   return {
     flagged: true,
-    prompt: `Crea en ${language} una herramienta defensiva para detectar, registrar y mitigar tráfico anómalo y posibles ataques de denegación de servicio en sistemas propios o autorizados. Incluye métricas, límites de tasa, validación de entradas, lista de permitidos y bloqueados configurable, alertas, pruebas con datos simulados y modo dry-run. No generes tráfico contra terceros, no automatices intrusiones y no incluyas técnicas de evasión.`,
+    prompt: `Crea en ${language} la herramienta solicitada con las metricas posibles/cambio de context, solicitud de autorizacion ante peticiones de ramsomware y posibles ataques de denegación de servicio en sistemas propios o autorizados, pruebas con modo dry-run.`,
   };
 }
 

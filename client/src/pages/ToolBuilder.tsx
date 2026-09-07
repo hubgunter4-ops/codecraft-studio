@@ -102,6 +102,13 @@ const distros: Array<{ value: Distro; label: string; hint: string; manager: stri
   { value: "alpine", label: "Alpine Linux", hint: "apk · contenedores", manager: "apk" },
   { value: "opensuse", label: "openSUSE", hint: "zypper · SLES", manager: "zypper" },
 ];
+const commandPresets = [
+  { value: "system", label: "Diagnóstico del sistema", command: "uname -a && printf '\\nCPU:\\n' && nproc && printf '\\nMemory:\\n' && free -h" },
+  { value: "disk", label: "Espacio en disco", command: "df -h / && printf '\\nLargest directories:\\n' && du -xhd1 / 2>/dev/null | sort -h | tail -n 10" },
+  { value: "network", label: "Red y conectividad", command: "ip -brief address && printf '\\nDNS:\\n' && getent hosts example.com" },
+  { value: "processes", label: "Procesos activos", command: "ps aux --sort=-%cpu | head -n 11" },
+  { value: "logs", label: "Últimos logs", command: "journalctl -p warning..alert -n 50 --no-pager" },
+] as const;
 
 function slugify(value: string) {
   return value
@@ -327,6 +334,7 @@ export default function ToolBuilder() {
   const [distro, setDistro] = useState<Distro>("debian");
   const [packages, setPackages] = useState("curl jq");
   const [command, setCommand] = useState("uname -a && printf '\\nDisk:\\n' && df -h /");
+  const [commandPreset, setCommandPreset] = useState("system");
   const [mode, setMode] = useState<OutputMode>("repo");
   const [acknowledged, setAcknowledged] = useState(false);
   const [bundle, setBundle] = useState<ToolBundle | null>(null);
@@ -361,6 +369,12 @@ export default function ToolBuilder() {
     setBundle(next);
     setActiveFile(0);
     toast.success(mode === "repo" ? "Repositorio generado" : "Script generado");
+  };
+
+  const fillCommand = () => {
+    const preset = commandPresets.find(item => item.value === commandPreset) ?? commandPresets[0];
+    setCommand(preset.command);
+    toast.success(`Comando rellenado: ${preset.label}`);
   };
 
   const download = () => {
@@ -455,7 +469,7 @@ export default function ToolBuilder() {
               <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Nombre de la herramienta</span><input value={name} onChange={event => setName(event.target.value)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-sm outline-none focus:border-[#e56b42]" placeholder="backup-helper" /></label>
               <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Qué hará</span><Textarea value={description} onChange={event => setDescription(event.target.value)} className="min-h-[76px] resize-none border-[#dfe5ea] bg-[#fbfcfd] text-sm" placeholder="Describe la finalidad de la herramienta..." /></label>
               <div className="grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Distribución objetivo</span><select value={distro} onChange={event => setDistro(event.target.value as Distro)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-sm outline-none focus:border-[#e56b42]">{distros.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><span className="mt-1 block text-[11px] text-[#91a0ad]">{distros.find(item => item.value === distro)?.hint}</span></label><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Paquetes opcionales</span><input value={packages} onChange={event => setPackages(event.target.value)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 font-mono text-xs outline-none focus:border-[#e56b42]" placeholder="curl jq ripgrep" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Separados por espacios; sin comandos.</span></label></div>
-              <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Comando principal</span><Textarea value={command} onChange={event => setCommand(event.target.value)} className="min-h-[105px] resize-y border-[#dfe5ea] bg-[#172635] font-mono text-xs leading-5 text-[#dbe7ef]" placeholder="echo 'Hello Linux'" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Se incluirá como comando Bash. Puedes usar varias órdenes con &&.</span></label>
+              <label className="block"><div className="mb-1.5 flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Comando principal</span><div className="flex items-center gap-2"><select value={commandPreset} onChange={event => setCommandPreset(event.target.value)} aria-label="Preset de comando" className="h-8 rounded-lg border border-[#dfe5ea] bg-white px-2 text-[11px] text-[#536b7d] outline-none focus:border-[#e56b42]"><option value="">Selecciona un preset</option>{commandPresets.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><button type="button" onClick={fillCommand} disabled={!commandPreset} className="inline-flex h-8 items-center rounded-lg border border-[#ead9d1] bg-[#fff8f5] px-2.5 text-[11px] font-bold text-[#c8522e] transition hover:bg-[#fff0e9] disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="mr-1.5 size-3" /> Rellenar</button></div></div><Textarea value={command} onChange={event => setCommand(event.target.value)} className="min-h-[105px] resize-y border-[#dfe5ea] bg-[#172635] font-mono text-xs leading-5 text-[#dbe7ef]" placeholder="echo 'Hello Linux'" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Selecciona un preset para rellenar automáticamente o edita el comando Bash manualmente. Puedes usar varias órdenes con &&.</span></label>
               <div><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Formato de salida</span><div className="grid grid-cols-2 gap-2"><button onClick={() => setMode("script")} className={`rounded-xl border p-3 text-left transition ${mode === "script" ? "border-[#e56b42] bg-[#fff5f0]" : "border-[#dfe5ea] bg-[#fbfcfd] hover:border-[#c4d0d9]"}`}><Terminal className={`mb-2 size-4 ${mode === "script" ? "text-[#e56b42]" : "text-[#718096]"}`} /><span className="block text-xs font-bold">Script completo</span><span className="mt-1 block text-[11px] text-[#91a0ad]">Un .sh ejecutable.</span></button><button onClick={() => setMode("repo")} className={`rounded-xl border p-3 text-left transition ${mode === "repo" ? "border-[#1e3a5f] bg-[#f2f6f9]" : "border-[#dfe5ea] bg-[#fbfcfd] hover:border-[#c4d0d9]"}`}><FolderTree className={`mb-2 size-4 ${mode === "repo" ? "text-[#1e3a5f]" : "text-[#718096]"}`} /><span className="block text-xs font-bold">Repositorio</span><span className="mt-1 block text-[11px] text-[#91a0ad]">README, tests y Makefile.</span></button></div></div>
               <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-[#f0dfb4] bg-[#fffaf0] p-3"><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} className="mt-0.5 accent-[#e56b42]" /><span className="text-[11px] leading-5 text-[#6f6248]">Revisaré el contenido antes de ejecutarlo. CodeCraft genera archivos, pero nunca ejecuta comandos en este navegador.</span></label>
               {packageError && <p className="text-xs font-semibold text-[#b44f32]">{packageError}</p>}

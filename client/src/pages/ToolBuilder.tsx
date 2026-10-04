@@ -29,6 +29,7 @@ import {
 type Distro = "debian" | "fedora" | "arch" | "alpine" | "opensuse";
 type OutputMode = "script" | "repo";
 type GeneratedFile = { path: string; content: string; executable?: boolean };
+type ProjectFileSpec = { path: string; role?: string };
 
 type ToolBundle = {
   name: string;
@@ -181,6 +182,48 @@ function packageTokens(value: string) {
   return value.trim().split(/\s+/).filter(Boolean);
 }
 
+function normalizeProjectPath(value: string) {
+  const path = value.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!path || path.startsWith("/") || path.includes("..") || /[\u0000\r\n]/.test(path)) throw new Error(`Ruta de proyecto no válida: “${value}”`);
+  return path.split("/").filter(Boolean).join("/");
+}
+
+export function parseProjectStructure(value: string): ProjectFileSpec[] {
+  const entries = value.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+  const files = entries.map(line => {
+    const [rawPath, rawRole] = line.split("|", 2);
+    return { path: normalizeProjectPath(rawPath), role: rawRole?.trim().toLowerCase() || undefined };
+  });
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (seen.has(file.path)) throw new Error(`Ruta repetida en la estructura: “${file.path}”`);
+    seen.add(file.path);
+  }
+  return files;
+}
+
+function scaffoldContent(file: ProjectFileSpec, slug: string, description: string) {
+  const role = file.role ?? "";
+  if (file.path.startsWith("scripts/") || role === "script" || file.path.endsWith(".sh")) {
+    return `#!/usr/bin/env bash\nset -Eeuo pipefail\n\n# ${file.path} · ${description}\nSCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"\nprintf '[${slug}] ejecutando %s\\n' "${file.path}"\n`;
+  }
+  if (file.path.startsWith("tests/") || role === "test") {
+    if (file.path.endsWith(".sh")) return `#!/usr/bin/env bash\nset -Eeuo pipefail\nROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"\nprintf 'test placeholder: %s\\n' "$ROOT"\n`;
+    if (file.path.endsWith(".py")) return `"""Pruebas iniciales para ${slug}."""\n\n\ndef test_placeholder():\n    assert True\n`;
+    return `// Pruebas iniciales para ${slug}.\ndescribe("${slug}", () => { it("placeholder", () => expect(true).toBe(true)); });\n`;
+  }
+  if (file.path.endsWith(".py") || role === "module") return `"""Módulo ${file.path} para ${slug}."""\n\n\ndef main():\n    """Punto de extensión del módulo."""\n    return None\n`;
+  if (file.path.endsWith(".ts") || file.path.endsWith(".js")) return `/** Módulo ${file.path} para ${slug}. */\n\nexport function main(): void {\n  // Punto de extensión del módulo.\n}\n`;
+  if (file.path.endsWith(".yml") || file.path.endsWith(".yaml")) return `name: ${slug} checks\non:\n  workflow_dispatch:\njobs:\n  validate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: echo "Validar ${slug}"\n`;
+  if (file.path.endsWith(".md")) return `# ${file.path}\n\nArchivo generado para ${slug}.\n\n${description}\n`;
+  if (file.path.endsWith(".json")) return `{}\n`;
+  return `# ${file.path}\n# Archivo generado para ${slug}.\n`;
+}
+
+function projectFiles(value: string, slug: string, description: string) {
+  return parseProjectStructure(value).map(file => ({ path: file.path, content: scaffoldContent(file, slug, description), executable: file.path.endsWith(".sh") || file.role === "script" }));
+}
+
 export function packageInstallCommand(distro: Distro, packages: string[]) {
   if (packages.length === 0) return "";
   const list = packages.map(shellQuote).join(" ");
@@ -306,7 +349,7 @@ function buildReadme({ name, slug, description, distro, packages, command, files
   ].join("\n");
 }
 
-export function buildBundle({ name, description, distro, packagesValue, command, mode }: { name: string; description: string; distro: Distro; packagesValue: string; command: string; mode: OutputMode }): ToolBundle {
+export function buildBundle({ name, description, distro, packagesValue, command, mode, structureValue = "" }: { name: string; description: string; distro: Distro; packagesValue: string; command: string; mode: OutputMode; structureValue?: string }): ToolBundle {
   const slug = slugify(name) || "linux-tool";
   const packages = packageTokens(packagesValue);
   const invalidPackage = packages.find(item => !/^[A-Za-z0-9][A-Za-z0-9@._+:-]*$/.test(item));
@@ -315,15 +358,21 @@ export function buildBundle({ name, description, distro, packagesValue, command,
   if (mode === "script") {
     return { name, slug, distro, mode, summary: description, script, files: [{ path: `${slug}.sh`, content: script, executable: true }] };
   }
+  const extraFiles = projectFiles(structureValue, slug, description);
+  const reserved = new Set([`bin/${slug}`, "README.md", "Makefile", "tests/smoke.sh", ".gitignore", "LICENSE"]);
+  const conflict = extraFiles.find(file => reserved.has(file.path));
+  if (conflict) throw new Error(`La estructura usa una ruta reservada: “${conflict.path}”`);
   const files: GeneratedFile[] = [
     { path: `bin/${slug}`, content: script, executable: true },
+    ...extraFiles,
     { path: "README.md", content: "" },
     { path: "Makefile", content: `run:\n\tbash bin/${slug} --dry-run\n\ninstall:\n\tinstall -Dm755 bin/${slug} $(DESTDIR)/usr/local/bin/${slug}\n\ncheck:\n\tbash tests/smoke.sh\n` },
     { path: "tests/smoke.sh", content: `#!/usr/bin/env bash\nset -Eeuo pipefail\nROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"\nTOOL="$ROOT/bin/${slug}"\nexpect() { local want="$1"; shift; local label="$1"; shift; set +e; "$@" >/dev/null 2>&1; local got=$?; set -e; [[ "$got" == "$want" ]] || { printf 'FAIL: %s (expected %s got %s)\\n' "$label" "$want" "$got" >&2; exit 1; }; printf 'ok: %s\\n' "$label"; }\nexpect 0 help "$TOOL" --help\nexpect 0 version "$TOOL" --version\nexpect 2 unknown-option "$TOOL" --unknown-option\nexpect 0 default-dry-run "$TOOL"\nprintf 'smoke tests passed\\n'\n`, executable: true },
     { path: ".gitignore", content: ".DS_Store\n*.log\n.env\n" },
     { path: "LICENSE", content: `MIT License\n\nCopyright (c) ${new Date().getFullYear()} CodeCraft Studio users\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files, to deal in the Software\nwithout restriction, including without limitation the rights to use, copy, modify,\nmerge, publish, distribute, sublicense, and/or sell copies of the Software.\n` },
   ];
-  files[1].content = buildReadme({ name, slug, description, distro, packages, command, files });
+  const readmeIndex = files.findIndex(file => file.path === "README.md");
+  files[readmeIndex].content = buildReadme({ name, slug, description, distro, packages, command, files });
   return { name, slug, distro, mode, summary: description, script, files };
 }
 
@@ -389,6 +438,7 @@ export default function ToolBuilder() {
   const [distro, setDistro] = useState<Distro>("debian");
   const [packages, setPackages] = useState("curl jq");
   const [command, setCommand] = useState("uname -a && printf '\\nDisk:\\n' && df -h /");
+  const [structure, setStructure] = useState("scripts/healthcheck.sh | script\nsrc/checks.py | module\ntests/test_checks.py | test\nconfig/default.json\n.github/workflows/validate.yml");
   const [commandPreset, setCommandPreset] = useState("system");
   const [generatedContext, setGeneratedContext] = useState("");
   const [mode, setMode] = useState<OutputMode>("repo");
@@ -425,7 +475,7 @@ export default function ToolBuilder() {
     const resolved = deriveCommandFromRequest(description, command);
     if (resolved.warning) toast.warning(resolved.warning);
     setCommand(resolved.command);
-    const next = buildBundle({ name: name.trim(), description: description.trim(), distro, packagesValue: packages.trim(), command: resolved.command, mode });
+    const next = buildBundle({ name: name.trim(), description: description.trim(), distro, packagesValue: packages.trim(), command: resolved.command, mode, structureValue: mode === "repo" ? structure : "" });
     setBundle(next);
     setActiveFile(0);
     toast.success(mode === "repo" ? "Repositorio generado" : "Script generado");
@@ -582,6 +632,7 @@ export default function ToolBuilder() {
               <label className="block"><div className="mb-1.5 flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Qué hará</span><div className="flex items-center gap-2"><button type="button" onClick={detectCommandFromDescription} className="inline-flex h-8 items-center rounded-lg border border-[#dfe5ea] bg-[#f2f6f9] px-2.5 text-[11px] font-bold text-[#34516b] transition hover:border-[#c4d0d9] hover:bg-white"><WandSparkles className="mr-1.5 size-3" /> Identificar petición</button><button type="button" onClick={generatePromptContext} className="inline-flex h-8 items-center rounded-lg border border-[#ead9d1] bg-[#fff8f5] px-2.5 text-[11px] font-bold text-[#c8522e] transition hover:bg-[#fff0e9]"><WandSparkles className="mr-1.5 size-3" /> GenPrompt</button></div></div><Textarea value={description} onChange={event => setDescription(event.target.value)} className="min-h-[76px] resize-none border-[#dfe5ea] bg-[#fbfcfd] text-sm" placeholder="Describe la finalidad de la herramienta..." /><span className="mt-1 block text-[11px] text-[#91a0ad]">Identifica palabras clave o convierte la petición en un contexto ejecutable sin modificar este texto.</span>{generatedContext && <div className="mt-3 rounded-xl border border-[#f0dfb4] bg-[#fffaf0] p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="flex items-center gap-1.5 text-[11px] font-bold text-[#6f6248]"><AlertTriangle className="size-3.5" /> Contexto generado · revisión humana requerida</span><button type="button" onClick={copyGeneratedContext} className="flex items-center gap-1 text-[11px] font-bold text-[#8a6a32] hover:text-[#c8522e]"><Clipboard className="size-3.5" /> Copiar</button></div><textarea readOnly value={generatedContext} aria-label="Contexto ejecutable generado" className="min-h-[190px] w-full resize-y rounded-lg border border-[#ecdcae] bg-white p-3 font-mono text-[11px] leading-5 text-[#6f6248] outline-none" /></div>}</label>
               <div className="grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Distribución objetivo</span><select value={distro} onChange={event => setDistro(event.target.value as Distro)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 text-sm outline-none focus:border-[#e56b42]">{distros.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><span className="mt-1 block text-[11px] text-[#91a0ad]">{distros.find(item => item.value === distro)?.hint}</span></label><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Paquetes opcionales</span><input value={packages} onChange={event => setPackages(event.target.value)} className="h-10 w-full rounded-lg border border-[#dfe5ea] bg-[#fbfcfd] px-3 font-mono text-xs outline-none focus:border-[#e56b42]" placeholder="curl jq ripgrep" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Separados por espacios; sin comandos.</span></label></div>
               <label className="block"><div className="mb-1.5 flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Comando principal</span><div className="flex items-center gap-2"><select value={commandPreset} onChange={event => setCommandPreset(event.target.value)} aria-label="Preset de comando" className="h-8 rounded-lg border border-[#dfe5ea] bg-white px-2 text-[11px] text-[#536b7d] outline-none focus:border-[#e56b42]"><option value="">Selecciona un preset</option>{commandPresets.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><button type="button" onClick={fillCommand} disabled={!commandPreset} className="inline-flex h-8 items-center rounded-lg border border-[#ead9d1] bg-[#fff8f5] px-2.5 text-[11px] font-bold text-[#c8522e] transition hover:bg-[#fff0e9] disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="mr-1.5 size-3" /> Rellenar</button></div></div><Textarea value={command} onChange={event => setCommand(event.target.value)} className="min-h-[105px] resize-y border-[#dfe5ea] bg-[#172635] font-mono text-xs leading-5 text-[#dbe7ef]" placeholder="echo 'Hello Linux'" /><span className="mt-1 block text-[11px] text-[#91a0ad]">Selecciona un preset para rellenar automáticamente o edita el comando Bash manualmente. Puedes usar varias órdenes con &&.</span></label>
+              {mode === "repo" && <label className="block"><div className="mb-1.5 flex items-center justify-between gap-2"><span className="text-xs font-bold text-[#4b6072]">Estructura del repositorio</span><Badge variant="outline" className="text-[10px] text-[#718096]">rutas relativas</Badge></div><Textarea value={structure} onChange={event => setStructure(event.target.value)} className="min-h-[150px] resize-y border-[#dfe5ea] bg-[#fbfcfd] font-mono text-xs leading-5" placeholder={'scripts/backup.sh | script\nsrc/backup.py | module\ntests/test_backup.py | test'} /><span className="mt-1 block text-[11px] leading-5 text-[#91a0ad]">Una ruta por línea. Opcionalmente añade <code>| script</code>, <code>| module</code> o <code>| test</code>. Se crean también carpetas anidadas automáticamente.</span></label>}
               <div><span className="mb-1.5 block text-xs font-bold text-[#4b6072]">Formato de salida</span><div className="grid grid-cols-2 gap-2"><button onClick={() => setMode("script")} className={`rounded-xl border p-3 text-left transition ${mode === "script" ? "border-[#e56b42] bg-[#fff5f0]" : "border-[#dfe5ea] bg-[#fbfcfd] hover:border-[#c4d0d9]"}`}><Terminal className={`mb-2 size-4 ${mode === "script" ? "text-[#e56b42]" : "text-[#718096]"}`} /><span className="block text-xs font-bold">Script completo</span><span className="mt-1 block text-[11px] text-[#91a0ad]">Un .sh ejecutable.</span></button><button onClick={() => setMode("repo")} className={`rounded-xl border p-3 text-left transition ${mode === "repo" ? "border-[#1e3a5f] bg-[#f2f6f9]" : "border-[#dfe5ea] bg-[#fbfcfd] hover:border-[#c4d0d9]"}`}><FolderTree className={`mb-2 size-4 ${mode === "repo" ? "text-[#1e3a5f]" : "text-[#718096]"}`} /><span className="block text-xs font-bold">Repositorio</span><span className="mt-1 block text-[11px] text-[#91a0ad]">README, tests y Makefile.</span></button></div></div>
               <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-[#f0dfb4] bg-[#fffaf0] p-3"><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} className="mt-0.5 accent-[#e56b42]" /><span className="text-[11px] leading-5 text-[#6f6248]">Revisaré el contenido antes de ejecutarlo. CodeCraft genera archivos, pero nunca ejecuta comandos en este navegador.</span></label>
               {packageError && <p className="text-xs font-semibold text-[#b44f32]">{packageError}</p>}

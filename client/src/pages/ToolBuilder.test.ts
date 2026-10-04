@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildBundle, createTar, packageInstallCommand } from "./ToolBuilder";
+import { buildBundle, createTar, packageInstallCommand, parseProjectStructure } from "./ToolBuilder";
 
 function writeExecutable(path: string, content: string) {
   writeFileSync(path, content, { mode: 0o755 });
@@ -46,6 +46,24 @@ describe("generador de herramientas Linux", () => {
   it("rechaza banderas como paquetes y genera instalación con --", () => {
     expect(packageInstallCommand("debian", ["curl", "jq"])).toContain("install -y -- 'curl' 'jq'");
     expect(() => buildBundle({ name: "bad", description: "test", distro: "debian", packagesValue: "--force", command: "true", mode: "script" })).toThrow();
+  });
+
+  it("valida la estructura y genera scripts, módulos, pruebas y carpetas anidadas", () => {
+    const structure = "scripts/backup.sh | script\nsrc/lib/metrics.py | module\ntests/unit/test_metrics.py | test\nconfig/default.json\n.github/workflows/validate.yml";
+    expect(parseProjectStructure(structure)).toHaveLength(5);
+    expect(() => parseProjectStructure("../escape.py")).toThrow();
+    expect(() => parseProjectStructure("src/a.py\nsrc/a.py")).toThrow();
+    const bundle = buildBundle({ name: "metrics", description: "Analiza métricas", distro: "debian", packagesValue: "", command: "printf ok", mode: "repo", structureValue: structure });
+    const paths = bundle.files.map(file => file.path);
+    expect(paths).toEqual(expect.arrayContaining(["scripts/backup.sh", "src/lib/metrics.py", "tests/unit/test_metrics.py", "config/default.json", ".github/workflows/validate.yml"]));
+    const backup = bundle.files.find(file => file.path === "scripts/backup.sh");
+    expect(backup?.executable).toBe(true);
+    const dir = mkdtempSync(join(tmpdir(), "codecraft-structure-"));
+    const backupPath = join(dir, "backup.sh");
+    writeExecutable(backupPath, backup?.content ?? "");
+    expect(() => execFileSync("bash", ["-n", backupPath])).not.toThrow();
+    expect(bundle.files.find(file => file.path === "src/lib/metrics.py")?.content).toContain("def main");
+    expect(bundle.files.find(file => file.path === "tests/unit/test_metrics.py")?.content).toContain("test_placeholder");
   });
 
   it("contiene el repositorio generado dentro de una carpeta raíz en el TAR", async () => {

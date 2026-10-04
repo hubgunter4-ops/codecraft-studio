@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { readAiConfig } from "@/lib/aiConfig";
 import {
   Archive,
   AlertTriangle,
@@ -43,8 +44,19 @@ type GitFile = { path: string; content: string; sha?: string };
 type GitRepo = { owner: string; repo: string; branch: string; files: GitFile[] };
 type RepairPatch = { id: string; path: string; summary: string; content: string };
 const githubTokenStorage = "codecraft.github.token";
-const openaiKeyStorage = "codecraft.openai.apiKey";
-const openaiBaseStorage = "codecraft.openai.baseUrl";
+
+function bytesToUtf8Base64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+  return btoa(binary);
+}
+
+function base64ToUtf8(value: string) {
+  const binary = atob(value.replace(/\s/g, ""));
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
 
 function parseGitHubRepo(value: string) {
   const match = value.trim().replace(/\.git$/, "").match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\/|$)/i) ?? value.trim().match(/^([^/]+)\/([^/]+)$/);
@@ -54,26 +66,31 @@ function parseGitHubRepo(value: string) {
 
 async function githubRequest<T>(token: string, path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`https://api.github.com${path}`, { ...init, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", ...(init?.headers ?? {}) } });
-  if (!response.ok) throw new Error(`GitHub respondió ${response.status}: ${response.status === 401 ? "token inválido" : response.statusText}`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    const message = response.status === 401 ? "token inválido" : response.status === 403 ? "acceso denegado o límite de GitHub alcanzado" : response.status === 404 ? "repositorio, rama o archivo no encontrado" : response.status === 422 ? "GitHub rechazó los datos enviados" : response.statusText;
+    throw new Error(`GitHub respondió ${response.status}: ${message}${detail ? ` · ${detail.slice(0, 180)}` : ""}`);
+  }
   return response.json() as Promise<T>;
 }
 
 async function loadGitHubRepo(token: string, source: string, branch: string): Promise<GitRepo> {
   const { owner, repo } = parseGitHubRepo(source);
-  const tree = await githubRequest<{ tree?: Array<{ path: string; type: string; sha: string }> }>(token, `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+  const tree = await githubRequest<{ truncated?: boolean; tree?: Array<{ path: string; type: string; sha: string }> }>(token, `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+  if (tree.truncated) throw new Error("GitHub truncó el árbol del repositorio; usa un repositorio más pequeño o repara una copia local");
   const entries = (tree.tree ?? []).filter(item => item.type === "blob" && !item.path.startsWith(".git/") && !item.path.includes("node_modules/")).slice(0, 80);
   if (entries.length === 0) throw new Error("No se encontraron archivos reparables en ese repositorio");
   const files = await Promise.all(entries.map(async entry => {
     const data = await githubRequest<{ content?: string; encoding?: string }>(token, `/repos/${owner}/${repo}/contents/${entry.path}?ref=${encodeURIComponent(branch)}`);
-    const content = data.encoding === "base64" ? atob((data.content ?? "").replace(/\n/g, "")) : data.content ?? "";
-    return { path: entry.path, content: content.slice(0, 40_000), sha: entry.sha };
+    const content = data.encoding === "base64" ? base64ToUtf8(data.content ?? "") : data.content ?? "";
+    return { path: entry.path, content, sha: entry.sha };
   }));
   return { owner, repo, branch, files };
 }
 
-async function askRepair(key: string, baseUrl: string, repo: GitRepo, request: string) {
+async function askRepair(key: string, baseUrl: string, model: string, repo: GitRepo, request: string) {
   const snapshot = repo.files.map(file => `--- ${file.path} ---\n${file.content}`).join("\n").slice(0, 100_000);
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-4o-mini", temperature: 0.15, max_tokens: 3500, response_format: { type: "json_object" }, messages: [{ role: "system", content: "Eres un ingeniero Linux experto. Analiza un repositorio sin ejecutar sus archivos. Devuelve JSON válido con esta forma exacta: {\"summary\":\"resumen en español\",\"patches\":[{\"id\":\"slug\",\"path\":\"ruta existente\",\"summary\":\"cambio\",\"content\":\"contenido completo nuevo del archivo\"}]}. Incluye solo parches seguros para archivos presentes en el repositorio. No inventes resultados de ejecución ni incluyas secretos." }, { role: "user", content: `Solicitud de reparación: ${request}\n\nRepositorio ${repo.owner}/${repo.repo}:\n${snapshot}` }] }) });
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: model || "gpt-5-mini", temperature: 0.15, max_tokens: 3500, response_format: { type: "json_object" }, messages: [{ role: "system", content: "Eres un ingeniero Linux experto. Analiza un repositorio sin ejecutar sus archivos. Devuelve JSON válido con esta forma exacta: {\"summary\":\"resumen en español\",\"patches\":[{\"id\":\"slug\",\"path\":\"ruta existente\",\"summary\":\"cambio\",\"content\":\"contenido completo nuevo del archivo\"}]}. Incluye solo parches seguros para archivos presentes en el repositorio. No inventes resultados de ejecución ni incluyas secretos." }, { role: "user", content: `Solicitud de reparación: ${request}\n\nRepositorio ${repo.owner}/${repo.repo}:\n${snapshot}` }] }) });
   if (!response.ok) throw new Error(`OpenAI respondió ${response.status}`);
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   const raw = payload.choices?.[0]?.message?.content?.trim();
@@ -84,10 +101,11 @@ async function askRepair(key: string, baseUrl: string, repo: GitRepo, request: s
 }
 
 async function publishGitHubRepo(token: string, repo: GitRepo, files: GeneratedFile[], message: string) {
+  if (files.length === 0) throw new Error("No hay archivos modificados para publicar");
   const ref = await githubRequest<{ object: { sha: string } }>(token, `/repos/${repo.owner}/${repo.repo}/git/ref/heads/${encodeURIComponent(repo.branch)}`);
   const parent = await githubRequest<{ tree: { sha: string } }>(token, `/repos/${repo.owner}/${repo.repo}/git/commits/${ref.object.sha}`);
   const blobs = await Promise.all(files.map(async file => {
-    const blob = await githubRequest<{ sha: string }>(token, `/repos/${repo.owner}/${repo.repo}/git/blobs`, { method: "POST", body: JSON.stringify({ content: btoa(unescape(encodeURIComponent(file.content))), encoding: "base64" }) });
+    const blob = await githubRequest<{ sha: string }>(token, `/repos/${repo.owner}/${repo.repo}/git/blobs`, { method: "POST", body: JSON.stringify({ content: bytesToUtf8Base64(file.content), encoding: "base64" }) });
     return { path: file.path, mode: file.executable ? "100755" : "100644", type: "blob", sha: blob.sha };
   }));
   const tree = await githubRequest<{ sha: string }>(token, `/repos/${repo.owner}/${repo.repo}/git/trees`, { method: "POST", body: JSON.stringify({ base_tree: parent.tree.sha, tree: blobs }) });
@@ -163,55 +181,50 @@ function packageTokens(value: string) {
   return value.trim().split(/\s+/).filter(Boolean);
 }
 
-function packageInstallCommand(distro: Distro, packages: string[]) {
+export function packageInstallCommand(distro: Distro, packages: string[]) {
   if (packages.length === 0) return "";
-  const list = packages.join(" ");
+  const list = packages.map(shellQuote).join(" ");
   switch (distro) {
     case "debian":
-      return `sudo apt-get update && sudo apt-get install -y ${list}`;
+      return `sudo apt-get update && sudo apt-get install -y -- ${list}`;
     case "fedora":
-      return `sudo dnf install -y ${list}`;
+      return `sudo dnf install -y -- ${list}`;
     case "arch":
-      return `sudo pacman -Sy --needed --noconfirm ${list}`;
+      return `sudo pacman -Sy --needed --noconfirm -- ${list}`;
     case "alpine":
-      return `sudo apk add --no-cache ${list}`;
+      return `sudo apk add --no-cache -- ${list}`;
     case "opensuse":
-      return `sudo zypper --non-interactive install ${list}`;
+      return `sudo zypper --non-interactive install -- ${list}`;
   }
 }
 
-function buildScript({ name, slug, description, distro, packages, command }: { name: string; slug: string; description: string; distro: Distro; packages: string[]; command: string }) {
+export function buildScript({ name, slug, description, distro, packages, command }: { name: string; slug: string; description: string; distro: Distro; packages: string[]; command: string }) {
   const distroLabel = distros.find(item => item.value === distro)?.label ?? distro;
   const install = packageInstallCommand(distro, packages);
-  const installBlock = install
-    ? `\ninfo "Instalando dependencias para ${distroLabel}"\nrun_shell ${shellQuote(install)}\n`
-    : "";
+  const safeName = name.replace(/[\r\n\u0000]/g, " ").trim();
+  const safeDescription = description.replace(/[\r\n\u0000]/g, " ").trim();
+  const installBlock = install ? `\n  [[ "$SKIP_DEPS" == true ]] || { info "Instalando dependencias para ${distroLabel}"; run_shell ${shellQuote(install)}; }\n` : "";
   const sudoCheck = install
     ? `if [[ "$DRY_RUN" == false ]] && ! command -v sudo >/dev/null 2>&1; then\n  printf 'This tool requires sudo for package installation.\\n' >&2\n  exit 1\nfi\n`
     : "";
+  const helpLines = [safeName, "", safeDescription, "", "Uso:", `  ${slug} [--dry-run|--apply] [-- argumentos...]`, "", "Opciones:", "  --dry-run        Muestra las órdenes sin ejecutarlas (predeterminado)", "  --apply          Ejecuta las órdenes", "  --skip-deps      Omite la instalación de dependencias", "  -v, --verbose    Muestra más información", "  -V, --version    Muestra la versión", "  -h, --help       Muestra esta ayuda"];
+  const helpBlock = helpLines.map(line => `  printf '%s\\n' ${shellQuote(line)}`).join("\n");
   return `#!/usr/bin/env bash
-# ${name} — ${description}
+# ${safeName} — ${safeDescription}
 # Target: ${distroLabel}
 # Generated by CodeCraft Studio
 set -Eeuo pipefail
 IFS=$'\\n\\t'
 
 readonly TOOL_NAME=${shellQuote(slug)}
-DRY_RUN=false
+readonly TOOL_VERSION='1.0.0'
+DRY_RUN=true
+SKIP_DEPS=false
+VERBOSE=false
+EXTRA_ARGS=()
 
 usage() {
-  cat <<'HELP'
-${name}
-
-${description}
-
-Usage:
-  ${slug} [--dry-run] [--help]
-
-Options:
-  --dry-run  Print commands without executing them
-  --help     Show this help message
-HELP
+${helpBlock}
 }
 
 info() {
@@ -222,20 +235,27 @@ run_shell() {
   if [[ "$DRY_RUN" == true ]]; then
     printf '[dry-run] %s\\n' "$1"
   else
-    bash -lc "$1"
+    bash -c "$1" "$TOOL_NAME" "\${EXTRA_ARGS[@]}"
   fi
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=true; shift ;;
+    --apply) DRY_RUN=false; shift ;;
+    --skip-deps) SKIP_DEPS=true; shift ;;
+    -v|--verbose) VERBOSE=true; shift ;;
+    -V|--version) printf '%s %s\\n' "$TOOL_NAME" "$TOOL_VERSION"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
-    *) printf 'Unknown option: %s\\n' "$1" >&2; usage >&2; exit 2 ;;
+    --) shift; EXTRA_ARGS=("$@"); break ;;
+    -*) printf 'Unknown option: %s\\n' "$1" >&2; usage >&2; exit 2 ;;
+    *) EXTRA_ARGS+=("$1"); shift ;;
   esac
 done
 
-${sudoCheck}${installBlock}
-info "Ejecutando ${name}"
+${sudoCheck}if [[ "$VERBOSE" == true ]]; then set -x; fi
+${installBlock}
+info "Ejecutando ${safeName}"
 run_shell ${shellQuote(command)}
 info "Herramienta completada"
 `;
@@ -263,11 +283,13 @@ function buildReadme({ name, slug, description, distro, packages, command, files
     "",
     "```bash",
     `chmod +x bin/${slug}`,
-    `./bin/${slug} --dry-run`,
-    `./bin/${slug}`,
+    `./bin/${slug} --help`,
+    `./bin/${slug}              # simulación por defecto`,
+    `./bin/${slug} --apply      # ejecución real`,
+    `./bin/${slug} --apply -- argumento1 argumento2`,
     "```",
     "",
-    "`--dry-run` muestra las órdenes sin ejecutarlas. Revisa siempre el script antes de ejecutarlo con privilegios.",
+    "La herramienta empieza en modo simulación. Usa `--apply` para ejecutar y `--skip-deps` para omitir instalaciones. Revisa siempre el script antes de ejecutarlo con privilegios.",
     "",
     "## Comando principal",
     "",
@@ -284,9 +306,11 @@ function buildReadme({ name, slug, description, distro, packages, command, files
   ].join("\n");
 }
 
-function buildBundle({ name, description, distro, packagesValue, command, mode }: { name: string; description: string; distro: Distro; packagesValue: string; command: string; mode: OutputMode }): ToolBundle {
+export function buildBundle({ name, description, distro, packagesValue, command, mode }: { name: string; description: string; distro: Distro; packagesValue: string; command: string; mode: OutputMode }): ToolBundle {
   const slug = slugify(name) || "linux-tool";
   const packages = packageTokens(packagesValue);
+  const invalidPackage = packages.find(item => !/^[A-Za-z0-9][A-Za-z0-9@._+:-]*$/.test(item));
+  if (invalidPackage) throw new Error(`El paquete “${invalidPackage}” contiene caracteres o banderas no permitidos.`);
   const script = buildScript({ name, slug, description, distro, packages, command });
   if (mode === "script") {
     return { name, slug, distro, mode, summary: description, script, files: [{ path: `${slug}.sh`, content: script, executable: true }] };
@@ -295,7 +319,7 @@ function buildBundle({ name, description, distro, packagesValue, command, mode }
     { path: `bin/${slug}`, content: script, executable: true },
     { path: "README.md", content: "" },
     { path: "Makefile", content: `run:\n\tbash bin/${slug} --dry-run\n\ninstall:\n\tinstall -Dm755 bin/${slug} $(DESTDIR)/usr/local/bin/${slug}\n\ncheck:\n\tbash tests/smoke.sh\n` },
-    { path: "tests/smoke.sh", content: `#!/usr/bin/env bash\nset -Eeuo pipefail\nROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"\n"$ROOT/bin/${slug}" --help >/dev/null\n"$ROOT/bin/${slug}" --dry-run >/dev/null\nprintf 'smoke tests passed\\n'\n`, executable: true },
+    { path: "tests/smoke.sh", content: `#!/usr/bin/env bash\nset -Eeuo pipefail\nROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"\nTOOL="$ROOT/bin/${slug}"\nexpect() { local want="$1"; shift; local label="$1"; shift; set +e; "$@" >/dev/null 2>&1; local got=$?; set -e; [[ "$got" == "$want" ]] || { printf 'FAIL: %s (expected %s got %s)\\n' "$label" "$want" "$got" >&2; exit 1; }; printf 'ok: %s\\n' "$label"; }\nexpect 0 help "$TOOL" --help\nexpect 0 version "$TOOL" --version\nexpect 2 unknown-option "$TOOL" --unknown-option\nexpect 0 default-dry-run "$TOOL"\nprintf 'smoke tests passed\\n'\n`, executable: true },
     { path: ".gitignore", content: ".DS_Store\n*.log\n.env\n" },
     { path: "LICENSE", content: `MIT License\n\nCopyright (c) ${new Date().getFullYear()} CodeCraft Studio users\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files, to deal in the Software\nwithout restriction, including without limitation the rights to use, copy, modify,\nmerge, publish, distribute, sublicense, and/or sell copies of the Software.\n` },
   ];
@@ -327,12 +351,12 @@ function writeTarOctal(target: Uint8Array, offset: number, length: number, value
   writeTarString(target, offset, length, `${value.toString(8).padStart(length - 1, "0")}\0`);
 }
 
-function createTar(files: GeneratedFile[]) {
+export function createTar(files: GeneratedFile[], rootDir: string) {
   const chunks: Uint8Array[] = [];
   for (const file of files) {
     const data = new TextEncoder().encode(file.content);
     const header = new Uint8Array(512);
-    writeTarString(header, 0, 100, file.path);
+    writeTarString(header, 0, 100, `${rootDir}/${file.path}`);
     writeTarOctal(header, 100, 8, file.executable ? 0o755 : 0o644);
     writeTarOctal(header, 108, 8, 0);
     writeTarOctal(header, 116, 8, 0);
@@ -379,6 +403,7 @@ export default function ToolBuilder() {
   const [repairData, setRepairData] = useState<{ summary: string; patches: RepairPatch[] } | null>(null);
   const [selectedPatches, setSelectedPatches] = useState<string[]>([]);
   const [appliedPatchIds, setAppliedPatchIds] = useState<string[]>([]);
+  const [appliedPatchPaths, setAppliedPatchPaths] = useState<string[]>([]);
   const [toolTab, setToolTab] = useState<"create" | "repair">(() => (window.location.hash.includes("tab=repair") || window.location.search.includes("tab=repair") ? "repair" : "create"));
   const [githubBusy, setGithubBusy] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
@@ -387,7 +412,7 @@ export default function ToolBuilder() {
 
   const selectedFile = bundle?.files[activeFile] ?? bundle?.files[0];
   const packageError = useMemo(() => {
-    const invalid = packageTokens(packages).find(item => !/^[A-Za-z0-9@._+:-]+$/.test(item));
+    const invalid = packageTokens(packages).find(item => !/^[A-Za-z0-9][A-Za-z0-9@._+:-]*$/.test(item));
     return invalid ? `El paquete “${invalid}” contiene caracteres no permitidos.` : "";
   }, [packages]);
 
@@ -468,7 +493,7 @@ export default function ToolBuilder() {
       downloadText(`${bundle.slug}.sh`, bundle.script);
       toast.success("Script descargado");
     } else {
-      downloadBlob(createTar(bundle.files), `${bundle.slug}.tar`);
+      downloadBlob(createTar(bundle.files, bundle.slug), `${bundle.slug}.tar`);
       toast.success("Repositorio descargado como TAR");
     }
   };
@@ -493,10 +518,11 @@ export default function ToolBuilder() {
 
   const repairRepo = async () => {
     if (!githubRepo) return toast.error("Carga primero un repositorio de GitHub");
-    const key = sessionStorage.getItem(openaiKeyStorage) ?? "";
+    const aiConfig = readAiConfig();
+    const key = aiConfig.apiKey;
     if (!key) return toast.error("Configura tu API Key de OpenAI en la pantalla principal");
     setGithubBusy(true);
-    try { const data = await askRepair(key, sessionStorage.getItem(openaiBaseStorage) ?? "https://api.openai.com/v1", githubRepo, repairRequest); setRepairData(data); setSelectedPatches(data.patches.map(patch => patch.id)); toast.success(`${data.patches.length} parches propuestos`); } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo analizar el repositorio"); } finally { setGithubBusy(false); }
+    try { const data = await askRepair(key, aiConfig.baseUrl, aiConfig.model, githubRepo, repairRequest); setRepairData(data); setSelectedPatches(data.patches.map(patch => patch.id)); setAppliedPatchIds([]); setAppliedPatchPaths([]); toast.success(`${data.patches.length} parches propuestos`); } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo analizar el repositorio"); } finally { setGithubBusy(false); }
   };
 
   const applySelectedPatches = () => {
@@ -505,6 +531,7 @@ export default function ToolBuilder() {
     if (selected.size === 0) return toast.error("Selecciona al menos un parche");
     setGithubRepo({ ...githubRepo, files: githubRepo.files.map(file => selected.has(file.path) ? { ...file, content: selected.get(file.path)! } : file) });
     setAppliedPatchIds(selectedPatches);
+    setAppliedPatchPaths(Array.from(selected.keys()));
     toast.success(`${selected.size} parches aplicados en la vista local`);
   };
 
@@ -512,7 +539,7 @@ export default function ToolBuilder() {
     if (!githubRepo || appliedPatchIds.length === 0) return toast.error("Aplica al menos un parche antes de publicar");
     if (!confirmPublish) return toast.error("Confirma crear un commit de reparación en GitHub");
     setGithubBusy(true);
-    try { const sha = await publishGitHubRepo(githubToken.trim(), githubRepo, githubRepo.files, `fix: apply ${appliedPatchIds.length} selected repair patches`); toast.success(`Reparación publicada · commit ${sha.slice(0, 7)}`); } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo publicar la reparación"); } finally { setGithubBusy(false); }
+    try { const changedFiles = githubRepo.files.filter(file => appliedPatchPaths.includes(file.path)); const sha = await publishGitHubRepo(githubToken.trim(), githubRepo, changedFiles, `fix: apply ${appliedPatchIds.length} selected repair patches`); toast.success(`Reparación publicada · commit ${sha.slice(0, 7)}`); } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo publicar la reparación"); } finally { setGithubBusy(false); }
   };
 
   const publishBundle = async () => {

@@ -1,0 +1,81 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { buildBundle, createTar, packageInstallCommand } from "./ToolBuilder";
+
+function writeExecutable(path: string, content: string) {
+  writeFileSync(path, content, { mode: 0o755 });
+}
+
+describe("generador de herramientas Linux", () => {
+  it("genera un script válido aunque la petición tenga saltos de línea y HELP", () => {
+    const bundle = buildBundle({
+      name: "auditor",
+      description: "Revisa el sistema\nHELP\necho NO_DEBE_EJECUTARSE",
+      distro: "debian",
+      packagesValue: "",
+      command: "printf '%s\\n' listo",
+      mode: "script",
+    });
+    const dir = mkdtempSync(join(tmpdir(), "codecraft-tool-"));
+    const script = join(dir, "auditor.sh");
+    writeExecutable(script, bundle.script);
+    expect(() => execFileSync("bash", ["-n", script])).not.toThrow();
+    expect(execFileSync("bash", [script, "--help"], { encoding: "utf8" })).toContain("HELP");
+    expect(execFileSync("bash", [script], { encoding: "utf8" })).toContain("[dry-run]");
+  });
+
+  it("simula por defecto, ejecuta con --apply y reenvía argumentos después de --", () => {
+    const bundle = buildBundle({
+      name: "arg-tool",
+      description: "Muestra el primer argumento",
+      distro: "debian",
+      packagesValue: "",
+      command: "printf 'arg=%s\\n' \"$1\"",
+      mode: "script",
+    });
+    const dir = mkdtempSync(join(tmpdir(), "codecraft-tool-"));
+    const script = join(dir, "arg-tool.sh");
+    writeExecutable(script, bundle.script);
+    expect(execFileSync("bash", [script, "--", "hola"], { encoding: "utf8" })).toContain("[dry-run]");
+    expect(execFileSync("bash", [script, "--apply", "--", "hola"], { encoding: "utf8" })).toContain("arg=hola");
+  });
+
+  it("rechaza banderas como paquetes y genera instalación con --", () => {
+    expect(packageInstallCommand("debian", ["curl", "jq"])).toContain("install -y -- 'curl' 'jq'");
+    expect(() => buildBundle({ name: "bad", description: "test", distro: "debian", packagesValue: "--force", command: "true", mode: "script" })).toThrow();
+  });
+
+  it("contiene el repositorio generado dentro de una carpeta raíz en el TAR", async () => {
+    const bundle = buildBundle({ name: "tar-tool", description: "Empaquetable", distro: "debian", packagesValue: "", command: "true", mode: "repo" });
+    const archive = createTar(bundle.files, bundle.slug);
+    const dir = mkdtempSync(join(tmpdir(), "codecraft-tar-"));
+    const tarPath = join(dir, "tool.tar");
+    writeFileSync(tarPath, Buffer.from(await archive.arrayBuffer()));
+    const listing = execFileSync("tar", ["-tf", tarPath], { encoding: "utf8" });
+    expect(listing).toContain("tar-tool/bin/tar-tool");
+    expect(listing).toContain("tar-tool/README.md");
+    expect(listing.split("\n").filter(Boolean).every(path => path.startsWith("tar-tool/"))).toBe(true);
+    expect(readFileSync(tarPath).length).toBeGreaterThan(1024);
+  });
+
+  it.each(["debian", "fedora", "arch", "alpine", "opensuse"] as const)("construye script y repositorio completos para %s", distro => {
+    const request = { name: `check-${distro}`, description: `Diagnóstico para ${distro}`, distro, packagesValue: "curl jq", command: "printf 'ok\\n'", mode: "script" as const };
+    const scriptBundle = buildBundle(request);
+    const repoBundle = buildBundle({ ...request, mode: "repo" });
+    const dir = mkdtempSync(join(tmpdir(), `codecraft-${distro}-`));
+    const scriptPath = join(dir, `${scriptBundle.slug}.sh`);
+    writeExecutable(scriptPath, scriptBundle.script);
+    expect(() => execFileSync("bash", ["-n", scriptPath])).not.toThrow();
+    expect(execFileSync("bash", [scriptPath, "--dry-run"], { encoding: "utf8" })).toContain("[dry-run]");
+    for (const file of repoBundle.files) {
+      const target = join(dir, "repo", file.path);
+      const parent = target.slice(0, target.lastIndexOf("/"));
+      mkdirSync(parent, { recursive: true });
+      writeFileSync(target, file.content, { mode: file.executable ? 0o755 : 0o644 });
+    }
+    expect(execFileSync("bash", [join(dir, "repo", "tests/smoke.sh")], { encoding: "utf8" })).toContain("smoke tests passed");
+  });
+});

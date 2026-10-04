@@ -69,6 +69,7 @@ describe("generador de herramientas Linux", () => {
   it("GenPrompt integra paquetes opcionales y comando principal en la configuración", () => {
     const request = "Crea una herramienta de diagnóstico.\nPaquetes opcionales: curl, jq, ripgrep\nComando principal: df -h / | sort -h";
     expect(extractToolSpec(request, "uname -a", "git")).toEqual({ packages: "curl jq ripgrep", command: "df -h / | sort -h", packageDetected: true, commandDetected: true });
+    expect(extractToolSpec("Paquetes opcionales: curl jq Comando principal: uname -a && df -h /", "true", "")).toMatchObject({ packages: "curl jq", command: "uname -a && df -h /", packageDetected: true, commandDetected: true });
     expect(extractToolSpec("Usa git y python3 para revisar logs", "journalctl -n 10", "")).toMatchObject({ packages: "git python3", command: "journalctl -n 10", packageDetected: true, commandDetected: false });
   });
 

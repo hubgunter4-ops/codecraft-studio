@@ -165,7 +165,7 @@ function normalizeDetectedPackages(value: string) {
 
 export function extractToolSpec(description: string, fallbackCommand: string, fallbackPackages: string) {
   const text = description.replace(/\r/g, "");
-  const packageMatch = text.match(/(?:paquetes?\s+opcionales?|dependencias?|packages?|requiere|instala(?:r)?|install)\s*[:=\-]?\s*([^\n]+)/i);
+  const packageMatch = text.match(/(?:paquetes?\s+opcionales?|dependencias?|packages?|requiere|instala(?:r)?|install)\s*[:=\-]?\s*([^\n]+?)(?=\s+(?:comando\s+(?:principal|a\s+ejecutar)|comando|ejecuta|run)\s*[:=\-]|$)/i);
   const commandMatch = text.match(/(?:comando\s+(?:principal|a\s+ejecutar)|comando|ejecuta|run)\s*[:=\-]?\s*([^\n]+)/i);
   const packageValues = packageMatch ? normalizeDetectedPackages(packageMatch[1]) : [];
   const inferredPackages = packageValues.length ? packageValues : ["curl", "jq", "ripgrep", "git", "python3", "node", "docker"].filter(item => new RegExp(`(?:^|[^a-z0-9])${item}(?:$|[^a-z0-9])`, "i").test(text));

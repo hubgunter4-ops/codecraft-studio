@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 PNPM ?= pnpm
 
-.PHONY: help install setup dev start check test test-watch audit audit-prod audit-dev validate build build-pages clean format format-check ci
+.PHONY: help install setup dev start check test test-watch validate-models audit audit-prod audit-dev validate build build-pages clean format format-check ci
 
 help:
 	@printf '%s\n' \
@@ -13,7 +13,8 @@ help:
 		'  make start         Inicia el bundle de producción ya construido' \
 		'  make check         Ejecuta TypeScript sin emitir archivos' \
 		'  make test          Ejecuta las pruebas unitarias una vez' \
-		'  make test-watch    Ejecuta Vitest en modo interactivo' \
+			'  make test-watch    Ejecuta Vitest en modo interactivo' \
+			'  make validate-models Verifica el registro y adaptadores de modelos IA' \
 		'  make audit         Audita todas las dependencias' \
 		'  make audit-prod    Audita únicamente dependencias de producción' \
 		'  make audit-dev     Audita únicamente dependencias de desarrollo' \
@@ -47,6 +48,9 @@ test:
 test-watch:
 	$(PNPM) exec vitest
 
+validate-models:
+	node scripts/validate-ai-models.mjs
+
 audit:
 	$(PNPM) audit
 
@@ -56,7 +60,7 @@ audit-prod:
 audit-dev:
 	$(PNPM) audit --dev
 
-validate: check test build-pages
+validate: check test validate-models build-pages
 
 build:
 	$(PNPM) build
@@ -73,4 +77,4 @@ format-check:
 clean:
 	rm -rf dist
 
-ci: install audit-prod audit-dev check test build-pages
+ci: install audit-prod audit-dev check test validate-models build-pages

@@ -17,7 +17,14 @@ async function callOpenAI(messages: Array<{ role: "system" | "user"; content: st
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("Falta configurar OPENAI_API_KEY en el entorno del servidor");
   const baseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
-  const response = await fetch(`${baseUrl}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.OPENAI_MODEL ?? "gpt-4o-mini", temperature, max_tokens: 3_000, messages }), signal: AbortSignal.timeout(45_000) });
+  const model = process.env.OPENAI_MODEL ?? "gpt-5-mini";
+  const normalized = model.toLowerCase().replace(/^[a-z0-9_-]+\//, "");
+  const options = normalized.startsWith("gpt-") || /^o[1345](?:$|[-.])/.test(normalized)
+    ? { max_completion_tokens: 3_000, reasoning: { effort: "low" } }
+    : normalized.includes("claude") || normalized.startsWith("gemini-")
+      ? { max_tokens: 3_000 }
+      : { temperature, max_tokens: 3_000 };
+  const response = await fetch(`${baseUrl}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, ...options, messages }), signal: AbortSignal.timeout(45_000) });
   if (!response.ok) { const detail = await response.text().catch(() => ""); console.error(`[OpenAI] ${response.status}: ${detail.slice(0, 500)}`); if (response.status === 401) throw new Error("La clave de OpenAI no es válida o no tiene permisos"); if (response.status === 429) throw new Error("OpenAI ha limitado temporalmente la solicitud"); throw new Error("OpenAI no pudo completar la solicitud"); }
   const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
   const content = payload.choices?.[0]?.message?.content?.trim();

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildBundle, createTar, packageInstallCommand, parseProjectStructure } from "./ToolBuilder";
+import { buildBundle, createTar, extractToolSpec, packageInstallCommand, parseProjectStructure } from "./ToolBuilder";
 
 function writeExecutable(path: string, content: string) {
   writeFileSync(path, content, { mode: 0o755 });
@@ -64,6 +64,12 @@ describe("generador de herramientas Linux", () => {
     expect(() => execFileSync("bash", ["-n", backupPath])).not.toThrow();
     expect(bundle.files.find(file => file.path === "src/lib/metrics.py")?.content).toContain("def main");
     expect(bundle.files.find(file => file.path === "tests/unit/test_metrics.py")?.content).toContain("test_placeholder");
+  });
+
+  it("GenPrompt integra paquetes opcionales y comando principal en la configuración", () => {
+    const request = "Crea una herramienta de diagnóstico.\nPaquetes opcionales: curl, jq, ripgrep\nComando principal: df -h / | sort -h";
+    expect(extractToolSpec(request, "uname -a", "git")).toEqual({ packages: "curl jq ripgrep", command: "df -h / | sort -h", packageDetected: true, commandDetected: true });
+    expect(extractToolSpec("Usa git y python3 para revisar logs", "journalctl -n 10", "")).toMatchObject({ packages: "git python3", command: "journalctl -n 10", packageDetected: true, commandDetected: false });
   });
 
   it("contiene el repositorio generado dentro de una carpeta raíz en el TAR", async () => {

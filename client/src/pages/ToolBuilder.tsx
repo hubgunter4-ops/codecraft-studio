@@ -155,6 +155,25 @@ function detectCommandPreset(description: string) {
   return "system";
 }
 
+function normalizeDetectedCommand(value: string) {
+  return value.replace(/```(?:bash|sh|shell)?/gi, "").replace(/```/g, "").replace(/^['"`\s]+|['"`\s]+$/g, "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeDetectedPackages(value: string) {
+  return value.split(/[\s,;]+/).map(item => item.replace(/^[`'"([{]+|[`'"\])},.]+$/g, "").trim()).filter(item => /^[A-Za-z0-9][A-Za-z0-9@._+:-]*$/.test(item) && !/^(y|and|e|with|para|con|instala|install)$/i.test(item));
+}
+
+export function extractToolSpec(description: string, fallbackCommand: string, fallbackPackages: string) {
+  const text = description.replace(/\r/g, "");
+  const packageMatch = text.match(/(?:paquetes?\s+opcionales?|dependencias?|packages?|requiere|instala(?:r)?|install)\s*[:=\-]?\s*([^\n]+)/i);
+  const commandMatch = text.match(/(?:comando\s+(?:principal|a\s+ejecutar)|comando|ejecuta|run)\s*[:=\-]?\s*([^\n]+)/i);
+  const packageValues = packageMatch ? normalizeDetectedPackages(packageMatch[1]) : [];
+  const inferredPackages = packageValues.length ? packageValues : ["curl", "jq", "ripgrep", "git", "python3", "node", "docker"].filter(item => new RegExp(`(?:^|[^a-z0-9])${item}(?:$|[^a-z0-9])`, "i").test(text));
+  const command = commandMatch ? normalizeDetectedCommand(commandMatch[1]) : fallbackCommand.trim();
+  const packagesValue = inferredPackages.length ? Array.from(new Set(inferredPackages)).join(" ") : fallbackPackages.trim();
+  return { packages: packagesValue, command, packageDetected: inferredPackages.length > 0, commandDetected: Boolean(commandMatch) };
+}
+
 function improveRequest(description: string, distro: Distro, presetLabel: string) {
   const clean = description.trim().replace(/\s+/g, " ");
   return `Construye una herramienta Linux para ${distro} que cumpla exactamente este objetivo: ${clean}. Conserva la intención y el resultado funcional solicitado. Usa como referencia la categoría ${presetLabel}, genera archivos autocontenidos y documenta los requisitos. Incluye validación de entradas, permisos mínimos, modo dry-run y mensajes claros. No ejecutes comandos durante la generación, no incluyas secretos y solicita revisión humana antes de cualquier acción destructiva o publicación.`;
@@ -500,6 +519,9 @@ export default function ToolBuilder() {
     const request = description.trim();
     if (!request) return toast.error("Describe primero qué hará la herramienta");
     const risky = /\b(rm\s+-rf|mkfs|dd\s+if=|shutdown|reboot|chmod\s+777|curl.+\|\s*(ba)?sh|wget.+\|\s*(ba)?sh)\b/i.test(request);
+    const extracted = extractToolSpec(request, command, packages);
+    if (extracted.packageDetected) setPackages(extracted.packages);
+    if (extracted.commandDetected) { setCommand(extracted.command); setCommandPreset(""); }
     const preset = commandPresets.find(item => item.value === detectCommandPreset(request)) ?? commandPresets[0];
     const improved = improveRequest(request, distro, preset.label);
     const context = [
@@ -517,7 +539,9 @@ export default function ToolBuilder() {
       "## Comportamiento esperado",
       `- Generar un script Bash o repositorio completo para ${distro}.`,
       `- Usar como punto de partida el comando de ${preset.label}:`,
-      `  ${preset.command}`,
+      `  ${extracted.command}`,
+      `- Paquetes opcionales detectados: ${extracted.packages || "ninguno"}.`,
+      `- Integrar esos paquetes y ese comando en la configuración editable antes de generar.`,
       "- Mantener el comando editable y mostrar un modo dry-run antes de ejecutar.",
       "- No ejecutar comandos durante la generación ni modificar la petición original.",
       "",
@@ -528,7 +552,7 @@ export default function ToolBuilder() {
     ].join("\n");
     setGeneratedContext(context);
     if (risky) toast.warning("Alerta: la petición contiene patrones potencialmente peligrosos. Se añadió un marco seguro; el contexto requiere revisión y no ejecuta nada.");
-    else toast.success("Petición reestructurada y contexto generado sin modificar el original");
+    else toast.success(extracted.packageDetected || extracted.commandDetected ? "GenPrompt detectó e integró paquetes y comando principal" : "Petición reestructurada y contexto generado sin modificar el original");
   };
 
   const copyGeneratedContext = async () => {

@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Check, ChevronRight, Clipboard, Code2, FileCode2, Github, KeyRound, Loader2, Play, RotateCcw, ShieldCheck, Sparkles, Terminal, WandSparkles, X } from "lucide-react";
+import { apiKeyStorage, baseUrlStorage, modelStorage, providerStorage, type ProviderId } from "@/lib/aiConfig";
 
 type Language = "javascript" | "typescript" | "python" | "java" | "go" | "rust" | "html" | "css" | "json" | "sql" | "csharp" | "cpp" | "php" | "ruby" | "kotlin" | "swift";
 const languages: Array<{ value: Language; label: string; monaco: string; ext: string }> = [
@@ -17,7 +18,6 @@ const starter = `function sumar(a, b) {
 }
 
 console.log(sumar(2, 3))`;
-type ProviderId = "openai" | "gemini" | "anthropic" | "openrouter" | "ollama";
 type ProviderPreset = { id: ProviderId; label: string; hint: string; baseUrl: string; model: string; placeholder: string };
 const providerPresets: ProviderPreset[] = [
   { id: "openai", label: "OpenAI · GPT-6 Astra", hint: "API compatible con OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-6-astra", placeholder: "sk-..." },
@@ -26,10 +26,6 @@ const providerPresets: ProviderPreset[] = [
   { id: "openrouter", label: "OpenRouter", hint: "Muchos modelos en un endpoint", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini", placeholder: "sk-or-..." },
   { id: "ollama", label: "Ollama local", hint: "Modelos locales · sin API key", baseUrl: "http://localhost:11434/v1", model: "llama3.2", placeholder: "ollama (opcional)" },
 ];
-const apiKeyStorage = "codecraft.ai.apiKey";
-const baseUrlStorage = "codecraft.ai.baseUrl";
-const providerStorage = "codecraft.ai.provider";
-const modelStorage = "codecraft.ai.model";
 const localConfigStorage = "codecraft.ai.localConfig";
 const localStorageEnabledStorage = "codecraft.ai.persistLocal";
 type SavedConfig = { apiKey: string; baseUrl: string; provider: ProviderId; model: string };

@@ -33,7 +33,7 @@ Abre [http://localhost:3000](http://localhost:3000).
 
 Pulsa **Configurar API Key** dentro de la web e introduce tu clave. Se almacena solo en `sessionStorage` durante la sesión de esa pestaña y se envía directamente al endpoint elegido desde el cliente. No se incorpora al bundle, no se sube a GitHub y no se guarda en la base de datos. Usa el botón **Eliminar** para borrarla antes de cerrar la pestaña.
 
-La aplicación usa `https://api.openai.com/v1` y el modelo `gpt-4o-mini`. El campo de URL base permite apuntar a otro endpoint compatible con OpenAI; por seguridad, las URL remotas deben usar HTTPS y HTTP solo se acepta para `localhost` o `127.0.0.1`.
+La aplicación usa `https://api.openai.com/v1` y el modelo predeterminado `gpt-5-mini`. El campo de URL base permite apuntar a otro endpoint compatible con OpenAI; por seguridad, las URL remotas deben usar HTTPS y HTTP solo se acepta para `localhost` o `127.0.0.1`.
 
 > La clave introducida en el navegador puede ser visible para ese navegador y sus extensiones. Usa una clave con límites de gasto, evita introducirla en equipos compartidos y revócala cuando ya no la necesites.
 

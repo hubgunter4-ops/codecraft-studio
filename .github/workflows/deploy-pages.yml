@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: make install
 
+      - name: Validate AI model registry and adapters
+        run: make validate-models
+
       - name: Build static site
         run: make build
         env:

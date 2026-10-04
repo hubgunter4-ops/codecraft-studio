@@ -46,6 +46,10 @@ El código, las peticiones y las respuestas se mantienen en el estado de la sesi
 
 La ruta [`#/tools`](https://hubgunter4-ops.github.io/codecraft-studio/#/tools) permite generar herramientas para Ubuntu/Debian, Fedora/RHEL, Arch Linux, Alpine y openSUSE. El usuario puede elegir entre un script Bash completo o un repositorio portable con `README.md`, `Makefile`, smoke test, `.gitignore` y licencia.
 
+En modo **Repositorio**, el campo **Estructura del repositorio** acepta una ruta relativa por línea y un rol opcional separado por `|`. Por ejemplo: `scripts/healthcheck.sh | script`, `src/checks.py | module`, `tests/unit/test_checks.py | test`, `config/default.json` y `.github/workflows/validate.yml`.
+
+Se crean automáticamente las carpetas anidadas y plantillas iniciales para scripts ejecutables, módulos Python/TypeScript, pruebas, JSON, Markdown y workflows. Las rutas absolutas, `..`, duplicadas y las rutas reservadas del repositorio se rechazan antes de generar el TAR.
+
 El generador adapta la instalación de paquetes al gestor de la distribución (`apt-get`, `dnf`, `pacman`, `apk` o `zypper`), incluye la opción `--dry-run`, muestra los archivos antes de descargar y no ejecuta comandos en el navegador. Los repositorios se descargan como archivos TAR y los scripts como `.sh` ejecutable.
 
 Antes de usar una salida generada con privilegios, revisa el contenido, las dependencias y las órdenes de instalación. La aplicación genera archivos localmente; no sube ni ejecuta el script.

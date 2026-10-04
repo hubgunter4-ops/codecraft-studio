@@ -50,6 +50,8 @@ En modo **Repositorio**, el campo **Estructura del repositorio** acepta una ruta
 
 Se crean automáticamente las carpetas anidadas y plantillas iniciales para scripts ejecutables, módulos Python/TypeScript, pruebas, JSON, Markdown y workflows. Las rutas absolutas, `..`, duplicadas y las rutas reservadas del repositorio se rechazan antes de generar el TAR.
 
+El botón **GenPrompt** analiza la solicitud antes de generar: reconoce líneas como `Paquetes opcionales: curl, jq` y `Comando principal: df -h /`, integra los valores en los campos editables y los incorpora al contexto generado. La solicitud original se conserva sin modificaciones y los valores detectados se pueden revisar antes de crear el repositorio.
+
 El generador adapta la instalación de paquetes al gestor de la distribución (`apt-get`, `dnf`, `pacman`, `apk` o `zypper`), incluye la opción `--dry-run`, muestra los archivos antes de descargar y no ejecuta comandos en el navegador. Los repositorios se descargan como archivos TAR y los scripts como `.sh` ejecutable.
 
 Antes de usar una salida generada con privilegios, revisa el contenido, las dependencias y las órdenes de instalación. La aplicación genera archivos localmente; no sube ni ejecuta el script.
